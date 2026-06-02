@@ -11,14 +11,23 @@ OUT_DIR = "/home/user/Test/certificates"
 def replace_in_xml(xml, placeholder, value):
     return xml.replace(f'<w:t>{placeholder}</w:t>', f'<w:t>{value}</w:t>')
 
+def feminize_arabic_role(role):
+    # Ensure role uses feminine form (منسقة instead of منسق)
+    if role.startswith('منسق ') and not role.startswith('منسقة'):
+        return 'منسقة ' + role[len('منسق '):]
+    if role == 'منسق':
+        return 'منسقة'
+    return role
+
 def apply_gender(xml, male):
     if male:
         xml = xml.replace('>للدكتورة<', '>للدكتور<')
         xml = xml.replace('>جهودها<', '>جهوده<')
         xml = xml.replace('>في عملها<', '>في عمله<')
         xml = xml.replace('>her outstanding efforts<', '>his outstanding efforts<')
-        xml = xml.replace('>her role<', '>his role<')
-        xml = xml.replace('Female Section', 'Male Section')
+        xml = xml.replace('>her role as <', '>his role as <')
+        # Male section stays as-is (template default is Female Section)
+        xml = xml.replace('>Female Section<', '>Male Section<')
     return xml
 
 def generate_docx(arabic_name, english_name, arabic_role, english_role, male, out_path):
@@ -71,6 +80,10 @@ def main():
         arabic_role  = (arabic_role  or "").strip()
         english_role = (english_role or "").strip()
         male = str(gender or "").strip() == "ذكر"
+
+        # Feminize Arabic role for female participants
+        if not male:
+            arabic_role = feminize_arabic_role(arabic_role)
 
         # Name files by Arabic name (placeholder A)
         safe_name = arabic_name.replace(' ', '_').replace('.', '').replace('/', '')
