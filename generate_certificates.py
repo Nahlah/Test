@@ -8,7 +8,7 @@ import arabic_reshaper
 from bidi.algorithm import get_display
 
 EXCEL    = "/root/.claude/uploads/d38d69a7-e04c-423f-a3b7-6b9589550bcd/52ee1c80-______.xlsx"
-TEMPLATE = "/root/.claude/uploads/08d794ce-260f-42e6-8f06-48c7dfe21b84/7fbfe9b9-tempalte.docx"
+TEMPLATE = "/root/.claude/uploads/d38d69a7-e04c-423f-a3b7-6b9589550bcd/2a56ac96-tempalte.docx"
 OUT_DIR  = "/home/user/Test/certificates"
 
 # Page in twips: 16838 x 11906 (landscape A4)
@@ -65,13 +65,13 @@ def apply_center_xml(xml, center, male):
     section_en = 'Male Section' if male else 'Female Section'
     city_en = CITY_EN.get(center.strip(), center.strip())
     if center:
-        ar_center = f' بالمركز التعليمي ب{center} لشطر {section_ar} خلال العام الجامعي ١٤٤٧ هـ'
+        ar_center = f'بالمركز التعليمي ب{center} لشطر {section_ar} خلال العام الجامعي ١٤٤٧ هـ'
         en_center = f' at the {city_en} Educational Center, {section_en}, during the academic year 1447 AH.'
     else:
-        ar_center = ' خلال العام الجامعي ١٤٤٧ هـ'
+        ar_center = 'خلال العام الجامعي ١٤٤٧ هـ'
         en_center = ' during the academic year 1447 AH.'
     xml = xml.replace(
-        '> بالمركز التعليمي بجدة لشطر الطالبات خلال العام الجامعي ١٤٤٧ هـ<',
+        '>بالمركز التعليمي بجدة لشطر الطالبات خلال العام الجامعي ١٤٤٧ هـ<',
         f'>{ar_center}<')
     xml = xml.replace(
         '> at the Jeddah Educational Center, Female Section, during the academic year 1447 AH.<',
