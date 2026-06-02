@@ -4,12 +4,41 @@ import os
 import mammoth
 from weasyprint import HTML
 
-EXCEL = "/root/.claude/uploads/08d794ce-260f-42e6-8f06-48c7dfe21b84/b2bae84f-______.xlsx"
+EXCEL = "/root/.claude/uploads/d38d69a7-e04c-423f-a3b7-6b9589550bcd/52ee1c80-______.xlsx"
 TEMPLATE = "/root/.claude/uploads/08d794ce-260f-42e6-8f06-48c7dfe21b84/7fbfe9b9-tempalte.docx"
 OUT_DIR = "/home/user/Test/certificates"
 
+CITY_EN = {
+    'الرياض': 'Riyadh', 'الدمام': 'Dammam', 'جدة': 'Jeddah',
+    'الجبيل': 'Jubail', 'المدينة': 'Madinah', 'أبها': 'Abha',
+    'تبوك': 'Tabuk', 'القصيم': 'Qassim', 'جازان': 'Jazan',
+    'حائل': 'Hail', 'الأحساء': 'Al-Ahsa', 'ينبع': 'Yanbu',
+}
+
 def replace_in_xml(xml, placeholder, value):
     return xml.replace(f'<w:t>{placeholder}</w:t>', f'<w:t>{value}</w:t>')
+
+def apply_center(xml, center, male):
+    section_ar = 'الطلاب' if male else 'الطالبات'
+    section_en = 'Male Section' if male else 'Female Section'
+    city_en = CITY_EN.get(center.strip(), center.strip())
+
+    if center:
+        ar_center = f' بالمركز التعليمي ب{center} لشطر {section_ar} خلال العام الجامعي ١٤٤٧ هـ'
+        en_center = f' at the {city_en} Educational Center, {section_en}, during the academic year 1447 AH.'
+    else:
+        ar_center = ' خلال العام الجامعي ١٤٤٧ هـ'
+        en_center = ' during the academic year 1447 AH.'
+
+    xml = xml.replace(
+        '> بالمركز التعليمي بجدة لشطر الطالبات خلال العام الجامعي ١٤٤٧ هـ<',
+        f'>{ar_center}<'
+    )
+    xml = xml.replace(
+        '> at the Jeddah Educational Center, Female Section, during the academic year 1447 AH.<',
+        f'>{en_center}<'
+    )
+    return xml
 
 def feminize_arabic_role(role):
     # Ensure role uses feminine form (منسقة instead of منسق)
@@ -26,17 +55,16 @@ def apply_gender(xml, male):
         xml = xml.replace('>في عملها<', '>في عمله<')
         xml = xml.replace('>her outstanding efforts<', '>his outstanding efforts<')
         xml = xml.replace('>her role as <', '>his role as <')
-        # Male section stays as-is (template default is Female Section)
-        xml = xml.replace('>Female Section<', '>Male Section<')
     return xml
 
-def generate_docx(arabic_name, english_name, arabic_role, english_role, male, out_path):
+def generate_docx(arabic_name, english_name, arabic_role, english_role, male, center, out_path):
     with zipfile.ZipFile(TEMPLATE, 'r') as z:
         names = z.namelist()
         files = {name: z.read(name) for name in names}
 
     xml = files['word/document.xml'].decode('utf-8')
     xml = apply_gender(xml, male)
+    xml = apply_center(xml, center, male)
     xml = replace_in_xml(xml, 'A', arabic_name)
     xml = replace_in_xml(xml, 'X', arabic_role)
     xml = replace_in_xml(xml, 'C', english_name)
@@ -71,6 +99,7 @@ def main():
         arabic_role  = ws.cell(row, 9).value   # col I
         english_role = ws.cell(row, 5).value   # col E
         gender       = ws.cell(row, 3).value   # col C: ذكر / أنثى
+        center       = ws.cell(row, 1).value   # col A: المركز التعليمي
 
         if not arabic_name and not english_name:
             continue
@@ -79,6 +108,7 @@ def main():
         english_name = (english_name or "").strip()
         arabic_role  = (arabic_role  or "").strip()
         english_role = (english_role or "").strip()
+        center       = (center       or "").strip()
         male = str(gender or "").strip() == "ذكر"
 
         # Feminize Arabic role for female participants
@@ -91,7 +121,7 @@ def main():
         pdf_out  = os.path.join(OUT_DIR, f"{safe_name}.pdf")
 
         print(f"Generating: {arabic_name} ({'M' if male else 'F'})")
-        generate_docx(arabic_name, english_name, arabic_role, english_role, male, docx_out)
+        generate_docx(arabic_name, english_name, arabic_role, english_role, male, center, docx_out)
         generate_pdf(docx_out, pdf_out)
 
     print(f"\nDone! {OUT_DIR}")
