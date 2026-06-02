@@ -204,6 +204,9 @@ def main():
         if not male:
             arabic_role = feminize_arabic_role(arabic_role)
 
+        # Remove "فرع" from role
+        arabic_role = arabic_role.replace(' فرع', '').strip()
+
         safe = arabic_name.replace(' ', '_').replace('.', '').replace('/', '')
         docx_out = os.path.join(OUT_DIR, f'{safe}.docx')
         pdf_out  = os.path.join(OUT_DIR, f'{safe}.pdf')
