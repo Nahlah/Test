@@ -4,9 +4,9 @@ import os
 import re
 import subprocess
 
-EXCEL     = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/f9ce724d-______.xlsx"
-TEMPLATE_F = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/517c3a62-tempalte_1_otherdocx.docx"
-TEMPLATE_M = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/136801e5-tempalte_2other.docx"
+EXCEL     = "/root/.claude/uploads/6f1d0156-7e85-437b-8ba1-1f9a0869b592/71624fcb-______.xlsx"
+TEMPLATE_F = "/root/.claude/uploads/6f1d0156-7e85-437b-8ba1-1f9a0869b592/e50b4dd6-tempalte_1_otherdocx.docx"
+TEMPLATE_M = "/root/.claude/uploads/6f1d0156-7e85-437b-8ba1-1f9a0869b592/861d681a-tempalte_2other.docx"
 OUT_DIR   = "/home/user/Test/certificates"
 
 ROLE_TRANSLATIONS = {
@@ -37,6 +37,11 @@ ROLE_TRANSLATIONS = {
     'منسق خدمة المجتمع':                           'Community Service Coordinator',
     'أمينة لجنة الانضباط الفرعية':                 'Secretary of the Branch Disciplinary Committee',
     'أمين لجنة الانضباط الفرعية':                  'Secretary of the Branch Disciplinary Committee',
+    'بلجنة  الأنشطة الطلابية':                     'Student Activities Committee',
+    'بلجنة الأنشطة الطلابية':                      'Student Activities Committee',
+    'بلجنة الإرشاد والإشراف الدراسي':              'Academic Advising and Supervision Committee',
+    'بلجنة التدريب التعاوني':                       'Cooperative Training Committee',
+    'أعمال إدارية ':                                'Administrative Work',
 }
 
 def translate_role(arabic_role):
@@ -112,13 +117,6 @@ def main():
         generate_docx(template, arabic_name, arabic_title, english_name,
                       eng_prefix, arabic_role, out_path)
         generated += 1
-
-    print(f"\nConverting to PDF...")
-    subprocess.run([
-        'soffice', '--headless', '--convert-to', 'pdf',
-        '--outdir', OUT_DIR
-    ] + [os.path.join(OUT_DIR, f) for f in os.listdir(OUT_DIR) if f.endswith('.docx')],
-    check=True)
 
     print(f"\nDone: {generated} generated, {skipped} skipped (incomplete data).")
 
