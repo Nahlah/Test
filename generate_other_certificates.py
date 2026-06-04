@@ -4,9 +4,9 @@ import os
 import re
 import subprocess
 
-EXCEL     = "/root/.claude/uploads/6f1d0156-7e85-437b-8ba1-1f9a0869b592/71624fcb-______.xlsx"
-TEMPLATE_F = "/root/.claude/uploads/6f1d0156-7e85-437b-8ba1-1f9a0869b592/e50b4dd6-tempalte_1_otherdocx.docx"
-TEMPLATE_M = "/root/.claude/uploads/6f1d0156-7e85-437b-8ba1-1f9a0869b592/861d681a-tempalte_2other.docx"
+EXCEL     = "/root/.claude/uploads/5d6c6860-d263-4813-892b-8374ea007650/ceafdea0-______.xlsx"
+TEMPLATE_F = "/root/.claude/uploads/5d6c6860-d263-4813-892b-8374ea007650/f14c874b-tempalte_1_otherdocx.docx"
+TEMPLATE_M = "/root/.claude/uploads/5d6c6860-d263-4813-892b-8374ea007650/e06080b6-tempalte_2other.docx"
 OUT_DIR   = "/home/user/Test/certificates"
 
 ROLE_TRANSLATIONS = {
@@ -60,14 +60,11 @@ def generate_docx(template, arabic_name, arabic_title, english_name,
 
     xml = files['word/document.xml'].decode('utf-8')
 
-    # Connect ك with role (remove space between ك and X)
-    xml = xml.replace('<w:t xml:space="preserve"> ك</w:t>', '<w:t></w:t>')
-
     xml = replace_in_xml(xml, 'A', arabic_name)
     xml = replace_in_xml(xml, 'B', arabic_title)
     xml = replace_in_xml(xml, 'C', english_name)
     xml = replace_in_xml(xml, 'D', english_prefix)
-    xml = replace_in_xml(xml, 'X', 'ك' + arabic_role)
+    xml = replace_in_xml(xml, 'X', arabic_role)
     xml = replace_in_xml(xml, 'Y', english_role)
 
     files['word/document.xml'] = xml.encode('utf-8')
