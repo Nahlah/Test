@@ -2,10 +2,11 @@ import openpyxl
 import zipfile
 import os
 import re
+import subprocess
 
-EXCEL     = "/root/.claude/uploads/ff64fdee-20f0-47fe-b255-b5357048d28c/7f9e8fb5-________________.xlsx"
-TEMPLATE_F = "/root/.claude/uploads/ff64fdee-20f0-47fe-b255-b5357048d28c/b4d8ba9c-tempalte_1_otherdocx.docx"
-TEMPLATE_M = "/root/.claude/uploads/ff64fdee-20f0-47fe-b255-b5357048d28c/1e8cb0f6-tempalte_2other.docx"
+EXCEL     = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/60c5f81c-______.xlsx"
+TEMPLATE_F = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/720df41a-tempalte_1_otherdocx.docx"
+TEMPLATE_M = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/12de6e23-tempalte_2other.docx"
 OUT_DIR   = "/home/user/Test/certificates"
 
 ROLE_TRANSLATIONS = {
@@ -23,6 +24,18 @@ ROLE_TRANSLATIONS = {
     'منسقة مشاريع التخرج لبرامج البكالوريوس':       'Graduation Projects Coordinator for Bachelor Programs',
     'مشرفة برنامج ماجستير علوم البيانات':           "Supervisor of the Master's Program in Data Science",
     'مشرف برنامج ماجستير الأمن السيبراني':          "Supervisor of the Master's Program in Cybersecurity",
+    'منسقة الأنشطة الطلابية':                      'Coordinator of Student Activities',
+    'منسق الأنشطة الطلابية':                       'Coordinator of Student Activities',
+    'لجنة الأنشطة الطلابية':                       'Student Activities Committee',
+    'منسقة الإرشاد الأكاديمي':                     'Academic Advising Coordinator',
+    'منسق الإرشاد الأكاديمي':                      'Academic Advising Coordinator',
+    'لجنة الإرشاد والإشراف الدراسي':               'Academic Advising and Supervision Committee',
+    'لجنة التدريب التعاوني':                        'Cooperative Training Committee',
+    'أعمال إدارية':                                 'Administrative Work',
+    'منسقة خدمة المجتمع':                          'Community Service Coordinator',
+    'منسق خدمة المجتمع':                           'Community Service Coordinator',
+    'أمينة لجنة الانضباط الفرعية':                 'Secretary of the Branch Disciplinary Committee',
+    'أمين لجنة الانضباط الفرعية':                  'Secretary of the Branch Disciplinary Committee',
 }
 
 def translate_role(arabic_role):
@@ -98,6 +111,13 @@ def main():
         generate_docx(template, arabic_name, arabic_title, english_name,
                       eng_prefix, arabic_role, out_path)
         generated += 1
+
+    print(f"\nConverting to PDF...")
+    subprocess.run([
+        'soffice', '--headless', '--convert-to', 'pdf',
+        '--outdir', OUT_DIR
+    ] + [os.path.join(OUT_DIR, f) for f in os.listdir(OUT_DIR) if f.endswith('.docx')],
+    check=True)
 
     print(f"\nDone: {generated} generated, {skipped} skipped (incomplete data).")
 
