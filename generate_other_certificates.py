@@ -3,16 +3,38 @@ import zipfile
 import os
 import re
 
-EXCEL     = "/root/.claude/uploads/32783ae4-1890-45a7-be14-608154d31e88/c55e1afa-________________.xlsx"
-TEMPLATE_F = "/root/.claude/uploads/32783ae4-1890-45a7-be14-608154d31e88/e2c38c30-tempalte_1_otherdocx.docx"  # female
-TEMPLATE_M = "/root/.claude/uploads/32783ae4-1890-45a7-be14-608154d31e88/ea97cc2d-tempalte_2other.docx"       # male
+EXCEL     = "/root/.claude/uploads/ff64fdee-20f0-47fe-b255-b5357048d28c/7f9e8fb5-________________.xlsx"
+TEMPLATE_F = "/root/.claude/uploads/ff64fdee-20f0-47fe-b255-b5357048d28c/b4d8ba9c-tempalte_1_otherdocx.docx"
+TEMPLATE_M = "/root/.claude/uploads/ff64fdee-20f0-47fe-b255-b5357048d28c/1e8cb0f6-tempalte_2other.docx"
 OUT_DIR   = "/home/user/Test/certificates"
+
+ROLE_TRANSLATIONS = {
+    'منسقة الأنشطة الطلابية':                      'Coordinator of Student Activities',
+    'منسق الأنشطة الطلابية':                       'Coordinator of Student Activities',
+    'لجنة شؤون الطلاب/ الأنشطة الطلابية':          'Student Affairs Committee / Student Activities',
+    'لجنة شؤون الطلاب/الأنشطة الطلابية':           'Student Affairs Committee / Student Activities',
+    'منسق فرع':                                    'Branch Coordinator',
+    'منسقة فرع':                                   'Branch Coordinator',
+    'منسق برنامج':                                  'Program Coordinator',
+    'منسقة برنامج':                                 'Program Coordinator',
+    'منسق الاختبارات':                              'Exam Coordinator',
+    'منسقة الاختبارات':                             'Exam Coordinator',
+    'منسقة مقررات السنة المشتركة':                  'Common Year Courses Coordinator',
+    'منسقة مشاريع التخرج لبرامج البكالوريوس':       'Graduation Projects Coordinator for Bachelor Programs',
+    'مشرفة برنامج ماجستير علوم البيانات':           "Supervisor of the Master's Program in Data Science",
+    'مشرف برنامج ماجستير الأمن السيبراني':          "Supervisor of the Master's Program in Cybersecurity",
+}
+
+def translate_role(arabic_role):
+    return ROLE_TRANSLATIONS.get(arabic_role.strip(), arabic_role.strip())
 
 def replace_in_xml(xml, placeholder, value):
     return xml.replace(f'<w:t>{placeholder}</w:t>', f'<w:t>{value}</w:t>')
 
 def generate_docx(template, arabic_name, arabic_title, english_name,
                   english_prefix, arabic_role, out_path):
+    english_role = translate_role(arabic_role)
+
     with zipfile.ZipFile(template, 'r') as z:
         names = z.namelist()
         files = {n: z.read(n) for n in names}
@@ -27,6 +49,7 @@ def generate_docx(template, arabic_name, arabic_title, english_name,
     xml = replace_in_xml(xml, 'C', english_name)
     xml = replace_in_xml(xml, 'D', english_prefix)
     xml = replace_in_xml(xml, 'X', 'ك' + arabic_role)
+    xml = replace_in_xml(xml, 'Y', english_role)
 
     files['word/document.xml'] = xml.encode('utf-8')
 
