@@ -4,9 +4,9 @@ import os
 import re
 import subprocess
 
-EXCEL     = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/60c5f81c-______.xlsx"
-TEMPLATE_F = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/720df41a-tempalte_1_otherdocx.docx"
-TEMPLATE_M = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/12de6e23-tempalte_2other.docx"
+EXCEL     = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/f9ce724d-______.xlsx"
+TEMPLATE_F = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/517c3a62-tempalte_1_otherdocx.docx"
+TEMPLATE_M = "/root/.claude/uploads/5e86db23-f0b9-4e31-a466-a0d917d44b95/136801e5-tempalte_2other.docx"
 OUT_DIR   = "/home/user/Test/certificates"
 
 ROLE_TRANSLATIONS = {
@@ -27,6 +27,7 @@ ROLE_TRANSLATIONS = {
     'منسقة الأنشطة الطلابية':                      'Coordinator of Student Activities',
     'منسق الأنشطة الطلابية':                       'Coordinator of Student Activities',
     'لجنة الأنشطة الطلابية':                       'Student Activities Committee',
+    'لجنة  الأنشطة الطلابية':                      'Student Activities Committee',
     'منسقة الإرشاد الأكاديمي':                     'Academic Advising Coordinator',
     'منسق الإرشاد الأكاديمي':                      'Academic Advising Coordinator',
     'لجنة الإرشاد والإشراف الدراسي':               'Academic Advising and Supervision Committee',
