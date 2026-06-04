@@ -4,9 +4,9 @@ import os
 import re
 import subprocess
 
-EXCEL     = "/root/.claude/uploads/74144cc4-c35c-4349-9618-cb72d129c09c/12ab044e-______.xlsx"
-TEMPLATE_F = "/root/.claude/uploads/74144cc4-c35c-4349-9618-cb72d129c09c/8b997b11-tempalte_1_otherdocx.docx"
-TEMPLATE_M = "/root/.claude/uploads/74144cc4-c35c-4349-9618-cb72d129c09c/9ac85f1e-tempalte_2other.docx"
+EXCEL     = "/root/.claude/uploads/85bb3a05-ff2f-4a4d-b7e8-9152bc5d2234/156bfaab-______.xlsx"
+TEMPLATE_F = "/root/.claude/uploads/85bb3a05-ff2f-4a4d-b7e8-9152bc5d2234/a7fce754-tempalte_1_otherdocx.docx"
+TEMPLATE_M = "/root/.claude/uploads/85bb3a05-ff2f-4a4d-b7e8-9152bc5d2234/863346f2-tempalte_2other.docx"
 OUT_DIR   = "/home/user/Test/certificates"
 
 ROLE_TRANSLATIONS = {
