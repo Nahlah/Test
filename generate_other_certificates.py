@@ -27,7 +27,7 @@ ROLE_TRANSLATIONS = {
     'منسقة الأنشطة الطلابية':                      'Coordinator of Student Activities',
     'منسق الأنشطة الطلابية':                       'Coordinator of Student Activities',
     'لجنة الأنشطة الطلابية':                       'Student Activities Committee',
-    'لجنة  الأنشطة الطلابية':                      'Student Activities Committee',
+
     'منسقة الإرشاد الأكاديمي':                     'Academic Advising Coordinator',
     'منسق الإرشاد الأكاديمي':                      'Academic Advising Coordinator',
     'لجنة الإرشاد والإشراف الدراسي':               'Academic Advising and Supervision Committee',
@@ -37,11 +37,11 @@ ROLE_TRANSLATIONS = {
     'منسق خدمة المجتمع':                           'Community Service Coordinator',
     'أمينة لجنة الانضباط الفرعية':                 'Secretary of the Branch Disciplinary Committee',
     'أمين لجنة الانضباط الفرعية':                  'Secretary of the Branch Disciplinary Committee',
-    'بلجنة  الأنشطة الطلابية':                     'Student Activities Committee',
+    'بلجنة الأنشطة الطلابية':                      'Student Activities Committee',
     'بلجنة الأنشطة الطلابية':                      'Student Activities Committee',
     'بلجنة الإرشاد والإشراف الدراسي':              'Academic Advising and Supervision Committee',
     'بلجنة التدريب التعاوني':                       'Cooperative Training Committee',
-    'أعمال إدارية ':                                'Administrative Work',
+    'أعمال إدارية':                                 'Administrative Work',
 }
 
 def translate_role(arabic_role):
@@ -100,7 +100,7 @@ def main():
 
         arabic_name  = arabic_name.strip()
         english_name = english_name.strip()
-        arabic_role  = (arabic_role  or '').strip()
+        arabic_role  = ' '.join((arabic_role  or '').split())
         arabic_title = (arabic_title or '').strip()
         eng_prefix   = (eng_prefix   or '').strip()
         male = str(gender or '').strip().startswith('ذكر')
