@@ -119,7 +119,8 @@ def main():
         template = TEMPLATE_M if male else TEMPLATE_F
 
         safe = arabic_name.replace(' ', '_').replace('.', '').replace('/', '')
-        out_path = os.path.join(OUT_DIR, f'{safe}.docx')
+        safe_role = arabic_role.replace(' ', '_').replace('/', '')
+        out_path = os.path.join(OUT_DIR, f'{safe}_{safe_role}.docx')
 
         print(f"Generating: {arabic_name} ({'M' if male else 'F'})")
         generate_docx(template, arabic_name, arabic_title, english_name,
