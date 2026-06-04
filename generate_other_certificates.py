@@ -67,6 +67,17 @@ def generate_docx(template, arabic_name, arabic_title, english_name,
     xml = replace_in_xml(xml, 'X', arabic_role)
     xml = replace_in_xml(xml, 'Y', english_role)
 
+    # Remove bottom padding from text boxes ending with "Wishing" and "سائلين"
+    for phrase in ['Wishing', 'سائلين']:
+        idx = xml.find(phrase)
+        if idx != -1:
+            para_end = xml.find('</w:p>', idx) + 6
+            bodypr_start = xml.find('<wps:bodyPr', para_end)
+            bodypr_end = xml.find('/>', bodypr_start) + 2
+            old_bodypr = xml[bodypr_start:bodypr_end]
+            new_bodypr = old_bodypr.replace('bIns="45720"', 'bIns="0"')
+            xml = xml[:bodypr_start] + new_bodypr + xml[bodypr_end:]
+
     files['word/document.xml'] = xml.encode('utf-8')
 
     with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED) as zout:
