@@ -4,7 +4,7 @@ import re
 from collections import namedtuple
 
 from .llm import generate
-from .template_fill import build_research_bonus_fields, build_research_bonus_fields_same_level
+from .template_fill import build_research_bonus_fields, build_research_bonus_fields_same_level, build_generic_rationale
 
 # يجمّع إعدادات محرّك التوليد المحلي في قيمة واحدة تُمرَّر بدل أربع معطيات منفصلة.
 # backend: "ollama" أو "local" | host: عنوان خادم Ollama | model: اسم النموذج أو ملف GGUF
@@ -17,10 +17,8 @@ SYSTEM_PROMPT = """أنت مساعد إداري متخصص في صياغة مح�
 مهمتك: تحويل "موضوع" كما ورد في محضر مجلس القسم إلى الصياغة المكافئة له في محضر مجلس الكلية،
 باتّباع الأنماط المعتادة التالية (استُخلصت من محاضر فعلية):
 
-1) حيثيات الموضوع في محضر الكلية تبدأ غالبًا بعبارة مثل:
-   "بتوصية من مجلس قسم {القسم} في جلسته {رقم الجلسة بالحروف} المنعقدة بتاريخ {التاريخ}، ..."
-   ثم يُعاد صياغة حيثيات القسم بأسلوب الكلية (مثلاً "ناقش المجلس" بدل "استعرض المجلس")
-   مع الحفاظ على جميع التفاصيل والأرقام والتواريخ والأسماء كما وردت في محضر القسم دون تغييرها أو اختراع معلومات جديدة.
+1) حيثيات الموضوع: **لا تكتبها** — تُبنى آليًا خارج هذا الطلب من نص محضر القسم حرفيًا لتفادي
+   أي تغيير في اسم أو رقم أو تاريخ. تجاهل هذا الحقل تمامًا وركّز جهدك على الحقول التالية.
 
 2) التوصية / القرار: تُصاغ كتوصية من مجلس الكلية (وليس كإحالة)، مثل:
    "التوصية بالموافقة بالإجماع على ..." إن كانت جميع الأصوات في محضر القسم موافقة،
@@ -38,8 +36,8 @@ SYSTEM_PROMPT = """أنت مساعد إداري متخصص في صياغة مح�
 لا تخترع أسماء أشخاص أو تواريخ أو أرقامًا غير واردة في المعطيات. إن لم تتوفر معلومة، اترك الحقل بصياغة
 عامة مناسبة دون اختلاق تفاصيل.
 
-أعد الإجابة بصيغة JSON فقط (بدون أي نص خارج كائن JSON)، بالمفاتيح التالية بالضبط:
-{"rationale": "...", "decision": "...", "document_ref": "...", "attachments": "...", "action_required": "..."}
+أعد الإجابة بصيغة JSON فقط (بدون أي نص خارج كائن JSON)، بالمفاتيح التالية بالضبط (اترك rationale فارغة):
+{"rationale": "", "decision": "...", "document_ref": "...", "attachments": "...", "action_required": "..."}
 """
 
 
@@ -173,12 +171,17 @@ def draft_topic(engine: Engine, dept_topic, department_name: str, dept_session_n
         return mechanical
 
     prompt = build_prompt(dept_topic, department_name, dept_session_number, dept_session_date, precedents)
-    return _generate_structured(
+    data = _generate_structured(
         engine, prompt, SYSTEM_PROMPT,
         fallback_rationale=dept_topic.rationale,
         fallback_document_ref=dept_topic.document_ref,
         fallback_attachments=dept_topic.attachments,
     )
+    # شبكة أمان: الحيثيات تبقى نص محضر القسم حرفيًا (مع جملة الإحالة فقط) بدل إعادة صياغة
+    # النموذج اللغوي له، حتى لا يُغيَّر أي اسم أو رقم أو تاريخ أثناء "تحسين" الأسلوب.
+    # النموذج يبقى مسؤولاً فقط عن التوصية/المستند/المرفقات/الإجراء المطلوب.
+    data["rationale"] = build_generic_rationale(dept_topic.rationale, department_name, ordinal, dept_session_date)
+    return data
 
 
 SYSTEM_PROMPT_SAME_LEVEL = """أنت مساعد إداري متخصص في صياغة محاضر مجالس الأقسام الجامعية باللغة العربية الرسمية،

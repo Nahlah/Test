@@ -12,6 +12,26 @@
 """
 import re
 
+_RATIONALE_VERB_SWAPS = (("استعرض المجلس", "ناقش المجلس"),)
+
+
+def build_generic_rationale(dept_rationale: str, department_name: str, session_ordinal_str: str,
+                             session_date: str) -> str:
+    """شبكة أمان عامة لكل أنواع المواضيع (وليس فقط بدل التميز): تُعاد حيثيات محضر القسم
+    حرفيًا كما هي (دون أي إعادة صياغة من نموذج لغوي) مع إضافة جملة الإحالة القياسية فقط.
+    الهدف: أي حقيقة أو اسم أو تاريخ ورد في محضر القسم يبقى كما هو دون أي فرصة لتحريفه أو
+    "تحسينه" أسلوبيًا من نموذج قد يخطئ. يُستخدم فقط عندما لا ينطبق قالب متخصص (كبدل التميز)
+    يعيد صياغة الحيثيات بشكل أدق من مجرد النسخ الحرفي.
+    """
+    body = (dept_rationale or "").strip()
+    for old, new in _RATIONALE_VERB_SWAPS:
+        if body.startswith(old):
+            body = new + body[len(old):]
+            break
+    prefix = f"بتوصية من مجلس قسم {department_name} في جلسته {session_ordinal_str} المنعقدة بتاريخ {session_date}، "
+    return prefix + body
+
+
 _RESEARCH_BONUS_KEYWORDS = ("بدل التميز", "بدل تميز", "مكافأة تميز", "مكافأة التميز")
 
 _NAME_RE = re.compile(
