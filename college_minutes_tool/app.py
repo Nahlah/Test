@@ -246,6 +246,11 @@ class MinutesApp:
         right = ttk.Frame(mid)
         right.pack(side="right", fill="both", expand=True, padx=10)
 
+        ttk.Label(right, text="السوابق المشابهة الموجودة في الأرشيف لهذا الموضوع:", font=FONT_BOLD).pack(anchor="e", pady=(0, 2))
+        self.precedents_preview = tk.Text(right, font=FONT, height=4, wrap="word", foreground="#555")
+        self.precedents_preview.pack(fill="x")
+        self.precedents_preview.configure(state="disabled")
+
         self.fields = {}
         field_labels = [
             ("title", "عنوان الموضوع"),
@@ -329,6 +334,26 @@ class MinutesApp:
             dept_name = self.loaded_depts[dept_idx]["minutes"].session.council_name
             self.topics_list.insert("end", f"[{dept_name}] {t.number} - {t.title}")
 
+    @staticmethod
+    def _format_precedents_preview(matcher, title: str, rationale: str) -> str:
+        if matcher is None:
+            return "لم يُحدَّد مجلد أرشيف بعد (تبويب الإعدادات)، أو لم يُعثر على أي ملفات فيه."
+        precedents = matcher.find_similar(title, rationale, top_k=3)
+        if not precedents:
+            return "بُحث في الأرشيف ولم يُعثر على أي موضوع سابق مشابه بدرجة كافية لهذا الموضوع."
+        lines = [f"تم البحث في الأرشيف — أفضل {len(precedents)} تطابق/تطابقات:"]
+        for topic_dict, score in precedents:
+            src = topic_dict.get("source_file", "")
+            lines.append(f"• [{score * 100:.0f}%] {topic_dict.get('title', '')[:90]}  ({src})")
+        return "\n".join(lines)
+
+    def _update_precedents_preview(self, widget, matcher, title: str, rationale: str):
+        text = self._format_precedents_preview(matcher, title, rationale)
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", text)
+        widget.configure(state="disabled")
+
     def _on_select_topic(self, _event=None):
         sel = self.topics_list.curselection()
         if not sel:
@@ -347,6 +372,7 @@ class MinutesApp:
         for key, widget in self.fields.items():
             widget.delete("1.0", "end")
             widget.insert("1.0", data.get(key, ""))
+        self._update_precedents_preview(self.precedents_preview, self.matcher, dept_topic.title, dept_topic.rationale)
 
     def _save_current_fields(self):
         if self._current_index is None:
@@ -532,6 +558,11 @@ class MinutesApp:
         right = ttk.Frame(mid)
         right.pack(side="right", fill="both", expand=True, padx=10)
 
+        ttk.Label(right, text="السوابق المشابهة الموجودة في الأرشيف لهذا الموضوع:", font=FONT_BOLD).pack(anchor="e", pady=(0, 2))
+        self.dept_mode_precedents_preview = tk.Text(right, font=FONT, height=4, wrap="word", foreground="#555")
+        self.dept_mode_precedents_preview.pack(fill="x")
+        self.dept_mode_precedents_preview.configure(state="disabled")
+
         self.dept_mode_fields = {}
         field_labels = [
             ("title", "عنوان الموضوع"),
@@ -610,6 +641,7 @@ class MinutesApp:
         for key, widget in self.dept_mode_fields.items():
             widget.delete("1.0", "end")
             widget.insert("1.0", data.get(key, ""))
+        self._update_precedents_preview(self.dept_mode_precedents_preview, self.dept_mode_matcher, topic.title, topic.rationale)
 
     def _on_select_dept_mode_topic_refresh(self, idx):
         data = self.dept_mode_generated.get(idx, {})
