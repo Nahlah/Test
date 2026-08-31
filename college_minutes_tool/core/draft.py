@@ -11,6 +11,12 @@ from .template_fill import build_research_bonus_fields, build_research_bonus_fie
 # | models_folder: مجلد ملفات GGUF (يُستخدم فقط مع backend="local")
 Engine = namedtuple("Engine", "backend host model models_folder")
 
+# أدنى درجة تشابه (TF-IDF) لاعتبار سابقة من الأرشيف "قريبة بما يكفي" ليُوثَق بمحاولة
+# النموذج اللغوي محاكاة أسلوبها؛ تطابق أضعف من ذلك غالبًا عرضي (كلمات مشتركة عامة فقط)
+# وقد يُضلّل النموذج فيُسقط تفاصيل حقيقية من محضر القسم أثناء محاولة "التكييف" مع سابقة
+# لا تخصّ هذا الموضوع فعليًا.
+_STRONG_PRECEDENT_THRESHOLD = 0.35
+
 SYSTEM_PROMPT = """أنت مساعد إداري متخصص في صياغة محاضر مجالس الكليات الجامعية باللغة العربية الرسمية،
 بأسلوب المحاضر الرسمية السعودية (لغة فصحى، صيغة الغائب، مصطلحات إدارية دقيقة).
 
@@ -182,10 +188,14 @@ def draft_topic(engine: Engine, dept_topic, department_name: str, dept_session_n
         fallback_document_ref=dept_topic.document_ref,
         fallback_attachments=dept_topic.attachments,
     )
-    if not precedents:
-        # لا توجد سابقة يُستأنس بأسلوبها أصلًا: الأسلم نسخ حيثيات محضر القسم حرفيًا (مع جملة
-        # الإحالة فقط) بدل ترك النموذج "يخترع" أسلوبًا من فراغ. عند وجود سابقة، تُترك حيثيات
-        # النموذج كما هي (بمراجعة المستخدم دائمًا) لأنها تحاكي أسلوب الكلية الفعلي المطلوب.
+    best_score = precedents[0][1] if precedents else 0.0
+    dropped_details = len(data.get("rationale", "")) < 0.6 * len(dept_topic.rationale or "")
+    if best_score < _STRONG_PRECEDENT_THRESHOLD or dropped_details:
+        # إما لا توجد سابقة يُستأنس بأسلوبها أصلًا فعليًا (تطابق ضعيف/عرضي لا يستحق
+        # الوثوق بأسلوبه)، أو أن حيثيات النموذج أقصر بشكل ملحوظ من حيثيات القسم الأصلية —
+        # وهو مؤشر قوي على أن تفاصيل حقيقية (اسم مؤتمر، عنوان بحث...) سقطت أثناء محاولة
+        # النموذج "تكييف" النص مع سابقة لا تطابقه فعليًا. الأسلم في الحالتين نسخ حيثيات
+        # القسم حرفيًا (مع جملة الإحالة فقط) لضمان عدم فقدان أي تفصيل حقيقي.
         data["rationale"] = build_generic_rationale(dept_topic.rationale, department_name, ordinal, dept_session_date)
     return data
 
