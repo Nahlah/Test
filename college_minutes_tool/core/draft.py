@@ -4,6 +4,7 @@ import re
 from collections import namedtuple
 
 from .llm import generate
+from .template_fill import build_research_bonus_fields, build_research_bonus_fields_same_level
 
 # يجمّع إعدادات محرّك التوليد المحلي في قيمة واحدة تُمرَّر بدل أربع معطيات منفصلة.
 # backend: "ollama" أو "local" | host: عنوان خادم Ollama | model: اسم النموذج أو ملف GGUF
@@ -160,7 +161,17 @@ def _generate_structured(engine: Engine, prompt: str, system: str, fallback_rati
 
 def draft_topic(engine: Engine, dept_topic, department_name: str, dept_session_number,
                  dept_session_date: str, precedents: list) -> dict:
-    """يستدعي محرك التوليد المحلي لصياغة موضوع محضر الكلية من موضوع محضر قسم. يرجع dict بالحقول الخمسة."""
+    """يصوغ موضوع محضر الكلية من موضوع محضر قسم. يرجع dict بالحقول الخمسة.
+
+    لأنواع مواضيع شديدة الانتظام (مثل "بدل تميز نشر علمي") تُبنى الصياغة آليًا بدون
+    نموذج لغوي (انظر core/template_fill.py) تفاديًا لخطر اختراع اسم أو تاريخ في مستند
+    رسمي؛ فقط إن لم ينطبق ذلك يُستخدم النموذج اللغوي المحلي.
+    """
+    ordinal = session_ordinal(dept_session_number)
+    mechanical = build_research_bonus_fields(dept_topic, department_name, ordinal, dept_session_date, precedents)
+    if mechanical is not None:
+        return mechanical
+
     prompt = build_prompt(dept_topic, department_name, dept_session_number, dept_session_date, precedents)
     return _generate_structured(
         engine, prompt, SYSTEM_PROMPT,
@@ -209,7 +220,15 @@ def build_same_level_prompt(topic_title: str, topic_details: str, precedents: li
 
 
 def draft_new_topic(engine: Engine, topic_title: str, topic_details: str, precedents: list) -> dict:
-    """يستدعي محرك التوليد المحلي لصياغة موضوع جديد لمحضر مجلس (قسم مثلًا) من وصف مختصر يكتبه
-    المستخدم، بالاعتماد على سوابق من محاضر المجلس نفسه (وليس ترجمة من مجلس تابع كما في draft_topic)."""
+    """يصوغ موضوعًا جديدًا لمحضر مجلس (قسم مثلًا) من وصف مختصر يكتبه المستخدم، بالاعتماد على
+    سوابق من محاضر المجلس نفسه (وليس ترجمة من مجلس تابع كما في draft_topic).
+
+    لأنواع مواضيع شديدة الانتظام (بدل تميز نشر علمي) تُبنى الصياغة آليًا بدون نموذج لغوي
+    (انظر core/template_fill.py)؛ فقط إن لم ينطبق ذلك يُستخدم النموذج اللغوي المحلي.
+    """
+    mechanical = build_research_bonus_fields_same_level(topic_title, topic_details, precedents)
+    if mechanical is not None:
+        return mechanical
+
     prompt = build_same_level_prompt(topic_title, topic_details, precedents)
     return _generate_structured(engine, prompt, SYSTEM_PROMPT_SAME_LEVEL, fallback_rationale=topic_details)
