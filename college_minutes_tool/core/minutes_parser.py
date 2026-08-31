@@ -91,11 +91,26 @@ def _parse_session_header(doc) -> SessionInfo:
 
 
 def _clean_council_name(text: str) -> str:
+    """يستخرج الاسم المجرّد للقسم/الكلية (مثلاً 'علوم الحاسب') من نص ترويسة المحضر،
+    بإزالة بادئات مثل 'اسم اللجنة / مجلس قسم' وأي إضافة إنجليزية بين قوسين، حتى لا تتكرر
+    كلمة 'مجلس قسم' أو تظهر ترجمة إنجليزية غير مرغوبة عند تركيب جمل مثل 'بتوصية من مجلس قسم {الاسم}'.
+    """
     text = text.strip()
     for prefix in ("اسم اللجنة", "اللجنة"):
         if text.startswith(prefix):
             text = text[len(prefix):].strip()
-    return text.lstrip("/ ").strip()
+    text = text.lstrip("/ ").strip()
+    for prefix in ("مجلس قسم", "مجلس كلية", "مجلس"):
+        if text.startswith(prefix):
+            text = text[len(prefix):].strip()
+            break
+    # إزالة أي إضافة إنجليزية (بين قوسين أو بترتيب أقواس غير منتظم كما يحدث أحيانًا عند
+    # الاستخراج من مربعات نص Word) غير موجودة في النماذج المعتمدة للمحاضر
+    text = re.sub(r"\([^)]*[A-Za-z][^)]*\)\s*$", "", text).strip()
+    m = re.search(r"[A-Za-z]", text)
+    if m:
+        text = text[:m.start()].strip()
+    return text.strip(" ()")
 
 
 def _iter_all_tables(tables):
