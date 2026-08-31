@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """
-أداة كتابة محاضر مجلس الكلية (أوف لاين بالكامل)
-=================================================
+أداة كتابة محاضر المجالس الجامعية (أوف لاين بالكامل)
+======================================================
 تعمل محليًا على جهازك دون اتصال بالإنترنت، وتستخدم نموذج ذكاء اصطناعي محلي عبر Ollama
-لصياغة نصوص كل موضوع اعتمادًا على محضر مجلس القسم، مع الرجوع لأرشيف محاضر مجلس الكلية
-السابقة لإيجاد مواضيع مشابهة يُستأنس بصياغتها ومستنداتها.
+لصياغة نصوص المحاضر، مع الرجوع لأرشيف محاضر سابقة لإيجاد مواضيع مشابهة يُستأنس بصياغتها.
+
+وضعان للاستخدام (تبويبان منفصلان):
+1) تحويل محضر قسم إلى محضر كلية: تُحمَّل محاضر مجالس أقسام وتُحوَّل مواضيعها تلقائيًا إلى
+   صياغة محضر مجلس الكلية المكافئة، بالرجوع لأرشيف محاضر الكلية السابقة.
+2) إنشاء موضوع جديد لمحضر القسم: يكتب منسّق محضر القسم وصفًا مختصرًا لموضوع جديد، وتصوغه
+   الأداة رسميًا بالاعتماد على أرشيف محاضر القسم نفسه (لاستخدام الأقسام العلمية مباشرة).
 """
 import os
 import queue
@@ -13,11 +18,11 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from core.config import load_config, save_config
-from core.minutes_parser import parse_minutes_file
+from core.minutes_parser import parse_minutes_file, Topic
 from core.archive import build_archive
 from core.similarity import TopicMatcher
 from core.ollama_client import list_models, OllamaError
-from core.draft import draft_topic, session_ordinal
+from core.draft import draft_topic, draft_new_topic
 from core.docx_builder import build_minutes_document
 
 FONT = ("Tahoma", 11)
@@ -27,8 +32,8 @@ FONT_BOLD = ("Tahoma", 11, "bold")
 class MinutesApp:
     def __init__(self, root):
         self.root = root
-        root.title("أداة كتابة محاضر مجلس الكلية")
-        root.geometry("1000x700")
+        root.title("أداة كتابة محاضر المجالس الجامعية")
+        root.geometry("1100x720")
 
         self.cfg = load_config()
         self.loaded_depts = []  # [{"path": str, "minutes": Minutes}, ...]
@@ -36,6 +41,14 @@ class MinutesApp:
         self.archive_topics = []
         self.matcher = None
         self.generated = {}  # index في topics_flat -> dict بالحقول المولّدة
+
+        # حالة تبويب "إنشاء موضوع جديد لمحضر القسم"
+        self.dept_mode_topics = []      # [Topic, ...] مواضيع كتبها المستخدم يدويًا
+        self.dept_mode_generated = {}   # index -> dict بالحقول المولّدة
+        self.dept_mode_archive_topics = []
+        self.dept_mode_matcher = None
+        self._dept_mode_current_index = None
+
         self._queue = queue.Queue()
 
         style = ttk.Style()
@@ -49,11 +62,14 @@ class MinutesApp:
 
         self.settings_tab = ttk.Frame(self.notebook)
         self.build_tab = ttk.Frame(self.notebook)
+        self.dept_mode_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.settings_tab, text="الإعدادات")
-        self.notebook.add(self.build_tab, text="إنشاء محضر جديد")
+        self.notebook.add(self.build_tab, text="تحويل محضر قسم إلى محضر كلية")
+        self.notebook.add(self.dept_mode_tab, text="إنشاء موضوع جديد لمحضر القسم")
 
         self._build_settings_tab()
         self._build_main_tab()
+        self._build_dept_mode_tab()
         self.root.after(200, self._poll_queue)
 
     # ---------------------------------------------------------------- إعدادات
@@ -81,10 +97,24 @@ class MinutesApp:
         ttk.Entry(f, textvariable=self.template_var, font=FONT, width=40, justify="right").grid(row=3, column=0, **pad)
         ttk.Button(f, text="استعراض...", command=self._browse_template).grid(row=3, column=2, **pad)
 
-        ttk.Button(f, text="حفظ الإعدادات", command=self._save_settings).grid(row=4, column=0, columnspan=3, pady=16)
+        ttk.Separator(f, orient="horizontal").grid(row=4, column=0, columnspan=3, sticky="ew", pady=10)
+        ttk.Label(f, text="إعدادات تبويب \"إنشاء موضوع جديد لمحضر القسم\"", font=FONT_BOLD).grid(
+            row=5, column=0, columnspan=3, sticky="e", padx=10)
+
+        ttk.Label(f, text="مجلد أرشيف محاضر القسم السابقة:", font=FONT).grid(row=6, column=1, sticky="e", **pad)
+        self.dept_archive_var = tk.StringVar(value=self.cfg.get("dept_archive_folder", ""))
+        ttk.Entry(f, textvariable=self.dept_archive_var, font=FONT, width=40, justify="right").grid(row=6, column=0, **pad)
+        ttk.Button(f, text="استعراض...", command=self._browse_dept_archive).grid(row=6, column=2, **pad)
+
+        ttk.Label(f, text="ملف النموذج (القالب) لمحضر مجلس القسم:", font=FONT).grid(row=7, column=1, sticky="e", **pad)
+        self.dept_template_var = tk.StringVar(value=self.cfg.get("dept_template_path", ""))
+        ttk.Entry(f, textvariable=self.dept_template_var, font=FONT, width=40, justify="right").grid(row=7, column=0, **pad)
+        ttk.Button(f, text="استعراض...", command=self._browse_dept_template).grid(row=7, column=2, **pad)
+
+        ttk.Button(f, text="حفظ الإعدادات", command=self._save_settings).grid(row=8, column=0, columnspan=3, pady=16)
 
         self.settings_status = ttk.Label(f, text="", font=FONT, foreground="green")
-        self.settings_status.grid(row=5, column=0, columnspan=3)
+        self.settings_status.grid(row=9, column=0, columnspan=3)
 
         note = (
             "ملاحظات:\n"
@@ -95,7 +125,7 @@ class MinutesApp:
             "  إن تغيّر تشكيل الأعضاء، عدّل القالب نفسه أولًا."
         )
         ttk.Label(f, text=note, font=FONT, justify="right", foreground="#555").grid(
-            row=6, column=0, columnspan=3, sticky="e", padx=10, pady=20)
+            row=10, column=0, columnspan=3, sticky="e", padx=10, pady=20)
 
     def _browse_archive(self):
         path = filedialog.askdirectory(title="اختر مجلد أرشيف محاضر مجلس الكلية")
@@ -106,6 +136,16 @@ class MinutesApp:
         path = filedialog.askopenfilename(title="اختر ملف النموذج", filetypes=[("Word", "*.docx")])
         if path:
             self.template_var.set(path)
+
+    def _browse_dept_archive(self):
+        path = filedialog.askdirectory(title="اختر مجلد أرشيف محاضر مجلس القسم")
+        if path:
+            self.dept_archive_var.set(path)
+
+    def _browse_dept_template(self):
+        path = filedialog.askopenfilename(title="اختر ملف نموذج محضر القسم", filetypes=[("Word", "*.docx")])
+        if path:
+            self.dept_template_var.set(path)
 
     def _refresh_models(self):
         try:
@@ -124,6 +164,8 @@ class MinutesApp:
             "ollama_model": self.model_var.get().strip(),
             "archive_folder": self.archive_var.get().strip(),
             "template_path": self.template_var.get().strip(),
+            "dept_archive_folder": self.dept_archive_var.get().strip(),
+            "dept_template_path": self.dept_template_var.get().strip(),
         })
         save_config(self.cfg)
         self.settings_status.config(text="تم حفظ الإعدادات.")
@@ -318,23 +360,32 @@ class MinutesApp:
                     data = draft_topic(host, model, topic, session.council_name, session.session_number,
                                         session.date, precedents)
                     data["title"] = topic.title
-                    self._queue.put(("ok", idx, data, n, len(indices)))
+                    self._queue.put(("college", "ok", idx, data, n, len(indices)))
                 except OllamaError as e:
-                    self._queue.put(("error", idx, str(e), n, len(indices)))
+                    self._queue.put(("college", "error", idx, str(e), n, len(indices)))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _poll_queue(self):
         try:
             while True:
-                kind, idx, payload, n, total = self._queue.get_nowait()
-                if kind == "ok":
-                    self.generated[idx] = payload
-                    if self._current_index == idx:
-                        self._on_select_topic_refresh(idx)
-                    self.status_var.set(f"تم توليد الموضوع {n} من {total}.")
+                mode, kind, idx, payload, n, total = self._queue.get_nowait()
+                if mode == "college":
+                    generated, current_idx, refresh, status_var = (
+                        self.generated, self._current_index, self._on_select_topic_refresh, self.status_var
+                    )
                 else:
-                    self.status_var.set(f"خطأ في الموضوع {n} من {total}: {payload}")
+                    generated, current_idx, refresh, status_var = (
+                        self.dept_mode_generated, self._dept_mode_current_index,
+                        self._on_select_dept_mode_topic_refresh, self.dept_mode_status_var
+                    )
+                if kind == "ok":
+                    generated[idx] = payload
+                    if current_idx == idx:
+                        refresh(idx)
+                    status_var.set(f"تم توليد الموضوع {n} من {total}.")
+                else:
+                    status_var.set(f"خطأ في الموضوع {n} من {total}: {payload}")
                     messagebox.showerror("خطأ في التوليد", payload)
         except queue.Empty:
             pass
@@ -397,6 +448,240 @@ class MinutesApp:
             messagebox.showerror("خطأ في التصدير", str(e))
             return
         self.status_var.set(f"تم التصدير بنجاح إلى: {out_path}")
+        messagebox.showinfo("تم", f"تم إنشاء المحضر بنجاح:\n{out_path}")
+
+    # =============================================================
+    # تبويب: إنشاء موضوع جديد لمحضر القسم (للأقسام العلمية مباشرة)
+    # =============================================================
+    def _build_dept_mode_tab(self):
+        f = self.dept_mode_tab
+
+        add_frame = ttk.LabelFrame(f, text="إضافة موضوع جديد")
+        add_frame.pack(fill="x", padx=10, pady=8)
+
+        ttk.Label(add_frame, text="عنوان الموضوع:", font=FONT).grid(row=0, column=1, sticky="e", padx=6, pady=4)
+        self.new_topic_title_var = tk.StringVar()
+        ttk.Entry(add_frame, textvariable=self.new_topic_title_var, font=FONT, width=70, justify="right").grid(
+            row=0, column=0, sticky="ew", padx=6, pady=4)
+
+        ttk.Label(add_frame, text="تفاصيل الموضوع (اختياري):", font=FONT).grid(row=1, column=1, sticky="ne", padx=6, pady=4)
+        self.new_topic_details_text = tk.Text(add_frame, font=FONT, height=4, wrap="word")
+        self.new_topic_details_text.grid(row=1, column=0, sticky="ew", padx=6, pady=4)
+        add_frame.columnconfigure(0, weight=1)
+
+        ttk.Button(add_frame, text="إضافة إلى قائمة المواضيع", command=self._add_new_topic).grid(
+            row=2, column=0, columnspan=2, pady=6)
+
+        meta = ttk.LabelFrame(f, text="بيانات جلسة محضر القسم الجديد")
+        meta.pack(fill="x", padx=10, pady=8)
+        labels = ["رقم الجلسة", "اليوم", "التاريخ", "المكان", "الوقت", "رقم أول موضوع"]
+        self.dept_mode_meta_vars = {}
+        for i, lbl in enumerate(labels):
+            ttk.Label(meta, text=lbl + ":", font=FONT).grid(row=i // 3, column=(i % 3) * 2 + 1, sticky="e", padx=6, pady=4)
+            var = tk.StringVar(value="1" if lbl == "رقم أول موضوع" else "")
+            ttk.Entry(meta, textvariable=var, font=FONT, width=18, justify="right").grid(
+                row=i // 3, column=(i % 3) * 2, sticky="w", padx=6, pady=4)
+            self.dept_mode_meta_vars[lbl] = var
+
+        mid = ttk.Frame(f)
+        mid.pack(fill="both", expand=True, padx=10, pady=8)
+
+        left = ttk.Frame(mid)
+        left.pack(side="right", fill="y")
+        ttk.Label(left, text="قائمة المواضيع الجديدة", font=FONT_BOLD).pack(anchor="e")
+        self.dept_mode_topics_list = tk.Listbox(left, font=FONT, width=45, height=16, exportselection=False)
+        self.dept_mode_topics_list.pack(fill="y", expand=True, pady=4)
+        self.dept_mode_topics_list.bind("<<ListboxSelect>>", self._on_select_dept_mode_topic)
+
+        btns = ttk.Frame(left)
+        btns.pack(fill="x", pady=4)
+        ttk.Button(btns, text="إزالة المحدد", command=self._remove_new_topic).pack(fill="x", pady=2)
+        ttk.Button(btns, text="توليد الموضوع المحدد", command=self._generate_dept_mode_selected).pack(fill="x", pady=2)
+        ttk.Button(btns, text="توليد جميع المواضيع", command=self._generate_dept_mode_all).pack(fill="x", pady=2)
+
+        right = ttk.Frame(mid)
+        right.pack(side="right", fill="both", expand=True, padx=10)
+
+        self.dept_mode_fields = {}
+        field_labels = [
+            ("title", "عنوان الموضوع"),
+            ("rationale", "حيثيات الموضوع"),
+            ("decision", "التوصية / القرار"),
+            ("document_ref", "المستند"),
+            ("attachments", "المرفقات"),
+            ("action_required", "الإجراء المطلوب"),
+        ]
+        for key, label in field_labels:
+            ttk.Label(right, text=label + ":", font=FONT_BOLD).pack(anchor="e", pady=(6, 0))
+            height = 6 if key == "rationale" else 2
+            txt = tk.Text(right, font=FONT, height=height, wrap="word")
+            txt.pack(fill="x")
+            self.dept_mode_fields[key] = txt
+
+        bottom = ttk.Frame(f)
+        bottom.pack(fill="x", padx=10, pady=10)
+        self.dept_mode_status_var = tk.StringVar(value="جاهز.")
+        ttk.Label(bottom, textvariable=self.dept_mode_status_var, font=FONT, foreground="blue").pack(side="right")
+        ttk.Button(bottom, text="تصدير محضر Word", command=self._export_dept_mode).pack(side="left")
+
+    def _add_new_topic(self):
+        title = self.new_topic_title_var.get().strip()
+        if not title:
+            messagebox.showwarning("تنبيه", "الرجاء كتابة عنوان الموضوع أولًا.")
+            return
+        details = self.new_topic_details_text.get("1.0", "end").strip()
+        topic = Topic(number=f"{len(self.dept_mode_topics) + 1:02d}", title=title, rationale=details)
+        self.dept_mode_topics.append(topic)
+
+        dept_archive_folder = self.dept_archive_var.get().strip()
+        self.dept_mode_archive_topics = build_archive(dept_archive_folder)
+        self.dept_mode_matcher = TopicMatcher(self.dept_mode_archive_topics) if self.dept_mode_archive_topics else None
+
+        self.new_topic_title_var.set("")
+        self.new_topic_details_text.delete("1.0", "end")
+        self._refresh_dept_mode_topics_display()
+        self.dept_mode_status_var.set(
+            f"{len(self.dept_mode_topics)} موضوع/مواضيع في القائمة. "
+            f"({len(self.dept_mode_archive_topics)} موضوع سابق في أرشيف القسم)"
+        )
+
+    def _remove_new_topic(self):
+        sel = self.dept_mode_topics_list.curselection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "اختر موضوعًا من القائمة لإزالته.")
+            return
+        del self.dept_mode_topics[sel[0]]
+        self._refresh_dept_mode_topics_display()
+
+    def _refresh_dept_mode_topics_display(self):
+        self.dept_mode_topics_list.delete(0, "end")
+        self.dept_mode_generated = {}
+        self._dept_mode_current_index = None
+        for widget in self.dept_mode_fields.values():
+            widget.delete("1.0", "end")
+        for t in self.dept_mode_topics:
+            self.dept_mode_topics_list.insert("end", f"{t.number} - {t.title}")
+
+    def _on_select_dept_mode_topic(self, _event=None):
+        sel = self.dept_mode_topics_list.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        self._dept_mode_current_index = idx
+        topic = self.dept_mode_topics[idx]
+        data = self.dept_mode_generated.get(idx, {
+            "title": topic.title,
+            "rationale": topic.rationale,
+            "decision": "",
+            "document_ref": "",
+            "attachments": "",
+            "action_required": "",
+        })
+        for key, widget in self.dept_mode_fields.items():
+            widget.delete("1.0", "end")
+            widget.insert("1.0", data.get(key, ""))
+
+    def _on_select_dept_mode_topic_refresh(self, idx):
+        data = self.dept_mode_generated.get(idx, {})
+        for key, widget in self.dept_mode_fields.items():
+            widget.delete("1.0", "end")
+            widget.insert("1.0", data.get(key, ""))
+
+    def _save_current_dept_mode_fields(self):
+        if self._dept_mode_current_index is None:
+            return
+        data = {key: widget.get("1.0", "end").strip() for key, widget in self.dept_mode_fields.items()}
+        self.dept_mode_generated[self._dept_mode_current_index] = data
+
+    def _generate_dept_mode_selected(self):
+        sel = self.dept_mode_topics_list.curselection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "الرجاء اختيار موضوع من القائمة أولًا.")
+            return
+        self._save_current_dept_mode_fields()
+        self._run_dept_mode_generation([sel[0]])
+
+    def _generate_dept_mode_all(self):
+        if not self.dept_mode_topics:
+            messagebox.showinfo("تنبيه", "لم تُضِف أي موضوع بعد.")
+            return
+        self._save_current_dept_mode_fields()
+        self._run_dept_mode_generation(list(range(len(self.dept_mode_topics))))
+
+    def _run_dept_mode_generation(self, indices):
+        host = self.host_var.get().strip()
+        model = self.model_var.get().strip()
+        if not model:
+            messagebox.showwarning("تنبيه", "الرجاء اختيار نموذج Ollama من تبويب الإعدادات أولًا.")
+            return
+
+        self.dept_mode_status_var.set(f"جارٍ توليد {len(indices)} موضوع/مواضيع...")
+
+        def worker():
+            for n, idx in enumerate(indices, start=1):
+                topic = self.dept_mode_topics[idx]
+                precedents = []
+                if self.dept_mode_matcher:
+                    precedents = self.dept_mode_matcher.find_similar(topic.title, topic.rationale, top_k=3)
+                try:
+                    data = draft_new_topic(host, model, topic.title, topic.rationale, precedents)
+                    data["title"] = topic.title
+                    self._queue.put(("dept_mode", "ok", idx, data, n, len(indices)))
+                except OllamaError as e:
+                    self._queue.put(("dept_mode", "error", idx, str(e), n, len(indices)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _export_dept_mode(self):
+        if not self.dept_mode_topics:
+            messagebox.showinfo("تنبيه", "لم تُضِف أي موضوع بعد.")
+            return
+        template_path = self.dept_template_var.get().strip()
+        if not template_path or not os.path.exists(template_path):
+            messagebox.showwarning("تنبيه", "الرجاء تحديد ملف نموذج محضر القسم من تبويب الإعدادات.")
+            return
+        self._save_current_dept_mode_fields()
+
+        topics_payload = []
+        for idx, topic in enumerate(self.dept_mode_topics):
+            data = self.dept_mode_generated.get(idx)
+            if not data:
+                data = {
+                    "title": topic.title,
+                    "rationale": topic.rationale,
+                    "decision": "",
+                    "document_ref": "",
+                    "attachments": "",
+                    "action_required": "",
+                }
+            topics_payload.append(data)
+
+        try:
+            start_number = int(self.dept_mode_meta_vars["رقم أول موضوع"].get().strip() or "1")
+        except ValueError:
+            start_number = 1
+
+        session_meta = {
+            "session_number": self.dept_mode_meta_vars["رقم الجلسة"].get().strip(),
+            "day": self.dept_mode_meta_vars["اليوم"].get().strip(),
+            "date": self.dept_mode_meta_vars["التاريخ"].get().strip(),
+            "place": self.dept_mode_meta_vars["المكان"].get().strip(),
+            "time": self.dept_mode_meta_vars["الوقت"].get().strip(),
+        }
+
+        out_path = filedialog.asksaveasfilename(
+            title="حفظ محضر مجلس القسم الجديد",
+            defaultextension=".docx",
+            filetypes=[("Word", "*.docx")],
+        )
+        if not out_path:
+            return
+        try:
+            build_minutes_document(template_path, out_path, session_meta, topics_payload, start_number)
+        except Exception as e:
+            messagebox.showerror("خطأ في التصدير", str(e))
+            return
+        self.dept_mode_status_var.set(f"تم التصدير بنجاح إلى: {out_path}")
         messagebox.showinfo("تم", f"تم إنشاء المحضر بنجاح:\n{out_path}")
 
 

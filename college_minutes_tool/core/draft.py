@@ -124,31 +124,86 @@ def _extract_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def draft_topic(host: str, model: str, dept_topic, department_name: str, dept_session_number,
-                 dept_session_date: str, precedents: list) -> dict:
-    """يستدعي Ollama لصياغة موضوع الكلية. يرجع dict بالحقول الخمسة، أو يرفع OllamaError."""
-    prompt = build_prompt(dept_topic, department_name, dept_session_number, dept_session_date, precedents)
-    raw = generate(host, model, prompt, system=SYSTEM_PROMPT)
+def _generate_structured(host: str, model: str, prompt: str, system: str, fallback_rationale: str,
+                          fallback_document_ref: str = "", fallback_attachments: str = "") -> dict:
+    """ينفّذ الاستدعاء ويحاول استخراج JSON صالح، مع محاولة ثانية أشد صرامة عند الفشل،
+    وعودة تدريجية (لا يفشل التطبيق) إلى نص خام في الحيثيات إن تعذّر الحصول على JSON."""
+    raw = generate(host, model, prompt, system=system)
     try:
         data = _extract_json(raw)
     except (ValueError, json.JSONDecodeError):
-        # محاولة ثانية بتعليمات أشد صرامة
         raw2 = generate(
             host, model,
             prompt + "\n\nتذكير: أعد فقط كائن JSON صالحًا واحدًا، بدون أي شرح أو نص إضافي.",
-            system=SYSTEM_PROMPT,
+            system=system,
         )
         try:
             data = _extract_json(raw2)
         except (ValueError, json.JSONDecodeError):
-            # فشل التوليد المهيكل: نعيد النص الخام في الحيثيات ليراجعه المستخدم يدويًا
             data = {
                 "rationale": raw.strip(),
                 "decision": "",
-                "document_ref": dept_topic.document_ref,
-                "attachments": dept_topic.attachments,
-                "action_required": "موافقة سعادة رئيس الجامعة",
+                "document_ref": fallback_document_ref,
+                "attachments": fallback_attachments,
+                "action_required": "",
             }
     for key in ("rationale", "decision", "document_ref", "attachments", "action_required"):
         data.setdefault(key, "")
     return data
+
+
+def draft_topic(host: str, model: str, dept_topic, department_name: str, dept_session_number,
+                 dept_session_date: str, precedents: list) -> dict:
+    """يستدعي Ollama لصياغة موضوع محضر الكلية من موضوع محضر قسم. يرجع dict بالحقول الخمسة."""
+    prompt = build_prompt(dept_topic, department_name, dept_session_number, dept_session_date, precedents)
+    return _generate_structured(
+        host, model, prompt, SYSTEM_PROMPT,
+        fallback_rationale=dept_topic.rationale,
+        fallback_document_ref=dept_topic.document_ref,
+        fallback_attachments=dept_topic.attachments,
+    )
+
+
+SYSTEM_PROMPT_SAME_LEVEL = """أنت مساعد إداري متخصص في صياغة محاضر مجالس الأقسام الجامعية باللغة العربية الرسمية،
+بأسلوب المحاضر الرسمية السعودية (لغة فصحى، صيغة الغائب، مصطلحات إدارية دقيقة).
+
+مهمتك: تحويل وصف مختصر لموضوع جديد (كتبه منسّق المحضر) إلى الصياغة الرسمية الكاملة المستخدمة في
+محاضر هذا المجلس نفسه، بالاعتماد على أسلوب/مستندات/إجراء مواضيع سابقة مشابهة من محاضر المجلس نفسه
+(المرفقة أدناه كسوابق) لضمان اتساق الصياغة مع ما اعتاده المجلس.
+
+قواعد الصياغة:
+1) حيثيات الموضوع: فقرة رسمية تشرح خلفية الموضوع وتفاصيله، بصيغة الغائب ("استعرض المجلس..."/"ناقش
+   المجلس...")، تتضمن كل التفاصيل والأرقام والتواريخ والأسماء التي ذكرها منسّق المحضر دون حذفها،
+   وبأسلوب مماثل للسوابق المشابهة إن وُجدت.
+2) التوصية / القرار: صياغة قرار المجلس بوضوح (موافقة/رفض/توصية) بأسلوب مماثل للسوابق.
+3) المستند: إن ذكر منسّق المحضر مستندًا استخدمه، وإلا استخدم نفس المستند النظامي الذي استُخدم في
+   السابقة الأقرب لنفس نوع الموضوع إن وُجدت.
+4) المرفقات: اذكر أي مرفقات ذكرها منسّق المحضر، وأضف مرفقات مماثلة لما ورد في السوابق إن كانت من
+   نفس نوع الموضوع (مثل: نسخة الورقة العلمية، نموذج الطلب، ...).
+5) الإجراء المطلوب: استخدم نفس الإجراء المعتاد لمواضيع من نفس النوع في السوابق إن وُجد.
+
+لا تخترع أسماء أشخاص أو تواريخ أو أرقامًا غير واردة فيما كتبه منسّق المحضر. إن لم تتوفر معلومة، اترك
+الحقل بصياغة عامة مناسبة دون اختلاق تفاصيل.
+
+أعد الإجابة بصيغة JSON فقط (بدون أي نص خارج كائن JSON)، بالمفاتيح التالية بالضبط:
+{"rationale": "...", "decision": "...", "document_ref": "...", "attachments": "...", "action_required": "..."}
+"""
+
+
+def build_same_level_prompt(topic_title: str, topic_details: str, precedents: list) -> str:
+    return f"""الموضوع الجديد المطلوب صياغته لمحضر هذا المجلس:
+العنوان: {topic_title}
+تفاصيل كتبها منسّق المحضر (قد تكون نقاطًا مختصرة): {topic_details or "لا توجد تفاصيل إضافية."}
+
+مواضيع سابقة مشابهة من محاضر هذا المجلس نفسه (سوابق يُستأنس بصياغتها ومستنداتها وإجراءاتها):
+{_format_precedents(precedents)}
+
+اكتب الآن الصياغة الرسمية الكاملة لهذا الموضوع بصيغة JSON فقط كما هو محدد في التعليمات.
+"""
+
+
+def draft_new_topic(host: str, model: str, topic_title: str, topic_details: str, precedents: list) -> dict:
+    """يستدعي Ollama لصياغة موضوع جديد لمحضر مجلس (قسم مثلًا) من وصف مختصر يكتبه المستخدم،
+    بالاعتماد على سوابق من محاضر المجلس نفسه (وليس ترجمة من مجلس تابع كما في draft_topic)."""
+    prompt = build_same_level_prompt(topic_title, topic_details, precedents)
+    return _generate_structured(host, model, prompt, SYSTEM_PROMPT_SAME_LEVEL, fallback_rationale=topic_details)

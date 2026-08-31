@@ -9,6 +9,8 @@ DEFAULTS = {
     "ollama_model": "",
     "archive_folder": "",
     "template_path": "",
+    "dept_archive_folder": "",
+    "dept_template_path": "",
 }
 
 
