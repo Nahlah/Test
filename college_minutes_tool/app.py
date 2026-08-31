@@ -33,7 +33,8 @@ class MinutesApp:
     def __init__(self, root):
         self.root = root
         root.title("أداة كتابة محاضر المجالس الجامعية")
-        root.geometry("1100x720")
+        root.geometry("1000x650")
+        root.minsize(700, 400)
 
         self.cfg = load_config()
         self.loaded_depts = []  # [{"path": str, "minutes": Minutes}, ...]
@@ -72,9 +73,33 @@ class MinutesApp:
         self._build_dept_mode_tab()
         self.root.after(200, self._poll_queue)
 
+    def _make_scrollable(self, parent):
+        """يلفّ محتوى تبويب داخل Canvas قابل للتمرير الرأسي، حتى لا يُقطَع أي جزء من
+        الواجهة على الشاشات الصغيرة أو عند تصغير النافذة. يُستخدم بدل استخدام إطار
+        التبويب مباشرة: أنشئ العناصر داخل الإطار الذي تُرجعه هذه الدالة."""
+        canvas = tk.Canvas(parent, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(canvas_window, width=e.width))
+
+        canvas.pack(side="right", fill="both", expand=True)
+        scrollbar.pack(side="left", fill="y")
+
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _on_mousewheel))
+        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+        return inner
+
     # ---------------------------------------------------------------- إعدادات
     def _build_settings_tab(self):
-        f = self.settings_tab
+        f = self._make_scrollable(self.settings_tab)
         pad = {"padx": 10, "pady": 6}
 
         ttk.Label(f, text="محرك التوليد:", font=FONT).grid(row=0, column=1, sticky="e", **pad)
@@ -202,7 +227,7 @@ class MinutesApp:
 
     # ------------------------------------------------------------ التبويب الرئيسي
     def _build_main_tab(self):
-        f = self.build_tab
+        f = self._make_scrollable(self.build_tab)
         top = ttk.Frame(f)
         top.pack(fill="x", padx=10, pady=8)
 
@@ -510,7 +535,7 @@ class MinutesApp:
     # تبويب: إنشاء موضوع جديد لمحضر القسم (للأقسام العلمية مباشرة)
     # =============================================================
     def _build_dept_mode_tab(self):
-        f = self.dept_mode_tab
+        f = self._make_scrollable(self.dept_mode_tab)
 
         add_frame = ttk.LabelFrame(f, text="إضافة موضوع جديد")
         add_frame.pack(fill="x", padx=10, pady=8)
