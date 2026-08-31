@@ -31,10 +31,11 @@ class MinutesApp:
         root.geometry("1000x700")
 
         self.cfg = load_config()
-        self.dept_minutes = None
+        self.loaded_depts = []  # [{"path": str, "minutes": Minutes}, ...]
+        self.topics_flat = []   # [(dept_index, Topic), ...] بترتيب العرض/التصدير
         self.archive_topics = []
         self.matcher = None
-        self.generated = {}  # index -> dict with fields
+        self.generated = {}  # index في topics_flat -> dict بالحقول المولّدة
         self._queue = queue.Queue()
 
         style = ttk.Style()
@@ -133,16 +134,14 @@ class MinutesApp:
         top = ttk.Frame(f)
         top.pack(fill="x", padx=10, pady=8)
 
-        ttk.Label(top, text="محضر مجلس القسم:", font=FONT).pack(side="right", padx=6)
-        self.dept_path_var = tk.StringVar()
-        ttk.Entry(top, textvariable=self.dept_path_var, font=FONT, width=55, justify="right").pack(side="right", padx=6)
-        ttk.Button(top, text="استعراض...", command=self._browse_dept).pack(side="right", padx=6)
-        ttk.Button(top, text="تحميل وتحليل", command=self._load_dept).pack(side="right", padx=6)
+        ttk.Label(top, text="محاضر مجالس الأقسام:", font=FONT_BOLD).pack(side="right", padx=6)
+        ttk.Button(top, text="إضافة محضر قسم...", command=self._add_dept_file).pack(side="right", padx=6)
+        ttk.Button(top, text="إزالة المحدد", command=self._remove_dept_file).pack(side="right", padx=6)
 
         info = ttk.Frame(f)
         info.pack(fill="x", padx=10, pady=4)
-        self.dept_info_label = ttk.Label(info, text="لم يتم تحميل أي محضر قسم بعد.", font=FONT, justify="right")
-        self.dept_info_label.pack(side="right")
+        self.dept_files_list = tk.Listbox(info, font=FONT, height=4, exportselection=False)
+        self.dept_files_list.pack(fill="x", expand=True)
 
         # بيانات جلسة محضر الكلية الجديد
         meta = ttk.LabelFrame(f, text="بيانات جلسة محضر مجلس الكلية الجديد")
@@ -162,7 +161,7 @@ class MinutesApp:
 
         left = ttk.Frame(mid)
         left.pack(side="right", fill="y")
-        ttk.Label(left, text="مواضيع محضر القسم", font=FONT_BOLD).pack(anchor="e")
+        ttk.Label(left, text="جميع المواضيع (من كل الأقسام المحمّلة)", font=FONT_BOLD).pack(anchor="e")
         self.topics_list = tk.Listbox(left, font=FONT, width=45, height=20, exportselection=False)
         self.topics_list.pack(fill="y", expand=True, pady=4)
         self.topics_list.bind("<<ListboxSelect>>", self._on_select_topic)
@@ -199,43 +198,64 @@ class MinutesApp:
 
         self._current_index = None
 
-    def _browse_dept(self):
+    def _add_dept_file(self):
         path = filedialog.askopenfilename(
             title="اختر محضر مجلس القسم",
             filetypes=[("مستندات مدعومة", "*.docx *.pdf *.txt"), ("الكل", "*.*")],
         )
-        if path:
-            self.dept_path_var.set(path)
-
-    def _load_dept(self):
-        path = self.dept_path_var.get().strip()
-        if not path or not os.path.exists(path):
-            messagebox.showwarning("تنبيه", "الرجاء اختيار ملف محضر مجلس القسم أولًا.")
+        if not path:
             return
         try:
-            self.dept_minutes = parse_minutes_file(path)
+            minutes = parse_minutes_file(path)
         except Exception as e:
-            messagebox.showerror("خطأ في التحليل", f"تعذّر تحليل ملف محضر القسم:\n{e}")
+            messagebox.showerror("خطأ في التحليل", f"تعذّر تحليل الملف:\n{e}")
             return
-        if not self.dept_minutes.topics:
-            messagebox.showwarning("تنبيه", "لم يتم العثور على أي مواضيع في هذا الملف. تأكد من أنه يطابق بنية النموذج المتوقعة.")
+        if not minutes.topics:
+            messagebox.showwarning(
+                "تنبيه", "لم يتم العثور على أي مواضيع في هذا الملف. تأكد من أنه يطابق بنية النموذج المتوقعة."
+            )
 
-        s = self.dept_minutes.session
-        self.dept_info_label.config(
-            text=f"{s.council_name}\nالجلسة {s.session_number} | {s.day} {s.date} | {s.place} {s.time}"
+        self.loaded_depts.append({"path": path, "minutes": minutes})
+        s = minutes.session
+        self.dept_files_list.insert(
+            "end",
+            f"{s.council_name} — الجلسة {s.session_number} ({s.date})  [{len(minutes.topics)} موضوع]",
         )
-        self.topics_list.delete(0, "end")
-        self.generated = {}
-        for t in self.dept_minutes.topics:
-            self.topics_list.insert("end", f"{t.number} - {t.title}")
 
         archive_folder = self.archive_var.get().strip()
         self.archive_topics = build_archive(archive_folder)
         self.matcher = TopicMatcher(self.archive_topics) if self.archive_topics else None
+
+        self._refresh_topics_display()
         self.status_var.set(
-            f"تم تحميل {len(self.dept_minutes.topics)} موضوعًا. "
+            f"تم تحميل {len(self.loaded_depts)} محضر قسم بإجمالي {len(self.topics_flat)} موضوعًا. "
             f"({len(self.archive_topics)} موضوع سابق في الأرشيف)"
         )
+
+    def _remove_dept_file(self):
+        sel = self.dept_files_list.curselection()
+        if not sel:
+            messagebox.showinfo("تنبيه", "اختر محضر قسم من القائمة أعلاه لإزالته.")
+            return
+        idx = sel[0]
+        self.dept_files_list.delete(idx)
+        del self.loaded_depts[idx]
+        self._refresh_topics_display()
+        self.status_var.set(f"تم تحميل {len(self.loaded_depts)} محضر قسم بإجمالي {len(self.topics_flat)} موضوعًا.")
+
+    def _refresh_topics_display(self):
+        self.topics_flat = []
+        for dept_idx, entry in enumerate(self.loaded_depts):
+            for t in entry["minutes"].topics:
+                self.topics_flat.append((dept_idx, t))
+        self.topics_list.delete(0, "end")
+        self.generated = {}
+        self._current_index = None
+        for widget in self.fields.values():
+            widget.delete("1.0", "end")
+        for dept_idx, t in self.topics_flat:
+            dept_name = self.loaded_depts[dept_idx]["minutes"].session.council_name
+            self.topics_list.insert("end", f"[{dept_name}] {t.number} - {t.title}")
 
     def _on_select_topic(self, _event=None):
         sel = self.topics_list.curselection()
@@ -243,7 +263,7 @@ class MinutesApp:
             return
         idx = sel[0]
         self._current_index = idx
-        dept_topic = self.dept_minutes.topics[idx]
+        _, dept_topic = self.topics_flat[idx]
         data = self.generated.get(idx, {
             "title": dept_topic.title,
             "rationale": dept_topic.rationale,
@@ -272,11 +292,11 @@ class MinutesApp:
         self._run_generation([sel[0]])
 
     def _generate_all(self):
-        if not self.dept_minutes or not self.dept_minutes.topics:
-            messagebox.showinfo("تنبيه", "لم يتم تحميل محضر مجلس قسم بعد.")
+        if not self.topics_flat:
+            messagebox.showinfo("تنبيه", "لم يتم تحميل أي محضر قسم بعد.")
             return
         self._save_current_fields()
-        self._run_generation(list(range(len(self.dept_minutes.topics))))
+        self._run_generation(list(range(len(self.topics_flat))))
 
     def _run_generation(self, indices):
         host = self.host_var.get().strip()
@@ -284,21 +304,19 @@ class MinutesApp:
         if not model:
             messagebox.showwarning("تنبيه", "الرجاء اختيار نموذج Ollama من تبويب الإعدادات أولًا.")
             return
-        dept_name = self.dept_minutes.session.council_name
-        dept_session_number = self.dept_minutes.session.session_number
-        dept_session_date = self.dept_minutes.session.date
 
         self.status_var.set(f"جارٍ توليد {len(indices)} موضوع/مواضيع...")
 
         def worker():
             for n, idx in enumerate(indices, start=1):
-                topic = self.dept_minutes.topics[idx]
+                dept_idx, topic = self.topics_flat[idx]
+                session = self.loaded_depts[dept_idx]["minutes"].session
                 precedents = []
                 if self.matcher:
                     precedents = self.matcher.find_similar(topic.title, topic.rationale, top_k=3)
                 try:
-                    data = draft_topic(host, model, topic, dept_name, dept_session_number,
-                                        dept_session_date, precedents)
+                    data = draft_topic(host, model, topic, session.council_name, session.session_number,
+                                        session.date, precedents)
                     data["title"] = topic.title
                     self._queue.put(("ok", idx, data, n, len(indices)))
                 except OllamaError as e:
@@ -330,8 +348,8 @@ class MinutesApp:
 
     # -------------------------------------------------------------- التصدير
     def _export(self):
-        if not self.dept_minutes or not self.dept_minutes.topics:
-            messagebox.showinfo("تنبيه", "لم يتم تحميل محضر مجلس قسم بعد.")
+        if not self.topics_flat:
+            messagebox.showinfo("تنبيه", "لم يتم تحميل أي محضر قسم بعد.")
             return
         template_path = self.template_var.get().strip()
         if not template_path or not os.path.exists(template_path):
@@ -340,7 +358,7 @@ class MinutesApp:
         self._save_current_fields()
 
         topics_payload = []
-        for idx, topic in enumerate(self.dept_minutes.topics):
+        for idx, (dept_idx, topic) in enumerate(self.topics_flat):
             data = self.generated.get(idx)
             if not data:
                 data = {
