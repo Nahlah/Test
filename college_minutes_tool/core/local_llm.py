@@ -19,7 +19,7 @@ def list_models(models_folder: str) -> list:
     return sorted(os.path.basename(p) for p in glob.glob(os.path.join(models_folder, "*.gguf")))
 
 
-def _get_llm(model_path: str, n_ctx: int = 4096):
+def _get_llm(model_path: str, n_ctx: int = 2048):
     if _loaded["path"] == model_path and _loaded["llm"] is not None:
         return _loaded["llm"]
     try:
@@ -29,7 +29,10 @@ def _get_llm(model_path: str, n_ctx: int = 4096):
             "مكتبة llama-cpp-python غير مثبّتة بعد. ثبّتها عبر:\npip3 install llama-cpp-python"
         ) from e
     try:
-        llm = Llama(model_path=model_path, n_ctx=n_ctx, n_gpu_layers=-1, verbose=False)
+        # n_gpu_layers=0 يعطّل تسريع Metal ويشغّل النموذج على المعالج (CPU) فقط.
+        # تسريع Metal (n_gpu_layers=-1) قد يتسبب بتعطّل صلب (crash) لا يمكن التقاطه في
+        # بايثون على بعض أجهزة Apple Silicon ذات الذاكرة المحدودة (8GB)؛ CPU أبطأ لكنه مستقر.
+        llm = Llama(model_path=model_path, n_ctx=n_ctx, n_gpu_layers=0, verbose=False)
     except Exception as e:
         raise LocalLLMError(f"تعذّر تحميل النموذج من الملف:\n{model_path}\n{e}") from e
     _loaded["path"] = model_path
