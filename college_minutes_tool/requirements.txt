@@ -2,3 +2,7 @@ python-docx>=1.1
 pdfplumber>=0.11
 scikit-learn>=1.4
 requests>=2.31
+
+# اختياري: مطلوب فقط لمحرك "نموذج محلي مباشر (GGUF)" بدل Ollama.
+# ثبّته يدويًا عند الحاجة (قد يأخذ عدة دقائق لأنه يُبنى من المصدر):
+#   pip3 install llama-cpp-python

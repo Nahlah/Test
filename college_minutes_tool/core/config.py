@@ -5,8 +5,10 @@ import os
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "config.json")
 
 DEFAULTS = {
+    "llm_backend": "ollama",  # "ollama" أو "local" (نموذج GGUF عبر llama-cpp-python)
     "ollama_host": "http://localhost:11434",
     "ollama_model": "",
+    "local_models_folder": "",
     "archive_folder": "",
     "template_path": "",
     "dept_archive_folder": "",

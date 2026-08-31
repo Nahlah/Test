@@ -1,8 +1,14 @@
 """صياغة نص موضوع محضر مجلس الكلية اعتمادًا على محضر مجلس القسم ومواضيع سابقة مشابهة من الأرشيف."""
 import json
 import re
+from collections import namedtuple
 
-from .ollama_client import generate, OllamaError
+from .llm import generate
+
+# يجمّع إعدادات محرّك التوليد المحلي في قيمة واحدة تُمرَّر بدل أربع معطيات منفصلة.
+# backend: "ollama" أو "local" | host: عنوان خادم Ollama | model: اسم النموذج أو ملف GGUF
+# | models_folder: مجلد ملفات GGUF (يُستخدم فقط مع backend="local")
+Engine = namedtuple("Engine", "backend host model models_folder")
 
 SYSTEM_PROMPT = """أنت مساعد إداري متخصص في صياغة محاضر مجالس الكليات الجامعية باللغة العربية الرسمية،
 بأسلوب المحاضر الرسمية السعودية (لغة فصحى، صيغة الغائب، مصطلحات إدارية دقيقة).
@@ -124,16 +130,16 @@ def _extract_json(text: str) -> dict:
     return json.loads(match.group(0))
 
 
-def _generate_structured(host: str, model: str, prompt: str, system: str, fallback_rationale: str,
+def _generate_structured(engine: Engine, prompt: str, system: str, fallback_rationale: str,
                           fallback_document_ref: str = "", fallback_attachments: str = "") -> dict:
     """ينفّذ الاستدعاء ويحاول استخراج JSON صالح، مع محاولة ثانية أشد صرامة عند الفشل،
     وعودة تدريجية (لا يفشل التطبيق) إلى نص خام في الحيثيات إن تعذّر الحصول على JSON."""
-    raw = generate(host, model, prompt, system=system)
+    raw = generate(engine.backend, engine.host, engine.model, engine.models_folder, prompt, system=system)
     try:
         data = _extract_json(raw)
     except (ValueError, json.JSONDecodeError):
         raw2 = generate(
-            host, model,
+            engine.backend, engine.host, engine.model, engine.models_folder,
             prompt + "\n\nتذكير: أعد فقط كائن JSON صالحًا واحدًا، بدون أي شرح أو نص إضافي.",
             system=system,
         )
@@ -152,12 +158,12 @@ def _generate_structured(host: str, model: str, prompt: str, system: str, fallba
     return data
 
 
-def draft_topic(host: str, model: str, dept_topic, department_name: str, dept_session_number,
+def draft_topic(engine: Engine, dept_topic, department_name: str, dept_session_number,
                  dept_session_date: str, precedents: list) -> dict:
-    """يستدعي Ollama لصياغة موضوع محضر الكلية من موضوع محضر قسم. يرجع dict بالحقول الخمسة."""
+    """يستدعي محرك التوليد المحلي لصياغة موضوع محضر الكلية من موضوع محضر قسم. يرجع dict بالحقول الخمسة."""
     prompt = build_prompt(dept_topic, department_name, dept_session_number, dept_session_date, precedents)
     return _generate_structured(
-        host, model, prompt, SYSTEM_PROMPT,
+        engine, prompt, SYSTEM_PROMPT,
         fallback_rationale=dept_topic.rationale,
         fallback_document_ref=dept_topic.document_ref,
         fallback_attachments=dept_topic.attachments,
@@ -202,8 +208,8 @@ def build_same_level_prompt(topic_title: str, topic_details: str, precedents: li
 """
 
 
-def draft_new_topic(host: str, model: str, topic_title: str, topic_details: str, precedents: list) -> dict:
-    """يستدعي Ollama لصياغة موضوع جديد لمحضر مجلس (قسم مثلًا) من وصف مختصر يكتبه المستخدم،
-    بالاعتماد على سوابق من محاضر المجلس نفسه (وليس ترجمة من مجلس تابع كما في draft_topic)."""
+def draft_new_topic(engine: Engine, topic_title: str, topic_details: str, precedents: list) -> dict:
+    """يستدعي محرك التوليد المحلي لصياغة موضوع جديد لمحضر مجلس (قسم مثلًا) من وصف مختصر يكتبه
+    المستخدم، بالاعتماد على سوابق من محاضر المجلس نفسه (وليس ترجمة من مجلس تابع كما في draft_topic)."""
     prompt = build_same_level_prompt(topic_title, topic_details, precedents)
-    return _generate_structured(host, model, prompt, SYSTEM_PROMPT_SAME_LEVEL, fallback_rationale=topic_details)
+    return _generate_structured(engine, prompt, SYSTEM_PROMPT_SAME_LEVEL, fallback_rationale=topic_details)

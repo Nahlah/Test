@@ -21,8 +21,8 @@ from core.config import load_config, save_config
 from core.minutes_parser import parse_minutes_file, Topic
 from core.archive import build_archive
 from core.similarity import TopicMatcher
-from core.ollama_client import list_models, OllamaError
-from core.draft import draft_topic, draft_new_topic
+from core.llm import list_models, LLMError as OllamaError
+from core.draft import draft_topic, draft_new_topic, Engine
 from core.docx_builder import build_minutes_document
 
 FONT = ("Tahoma", 11)
@@ -77,55 +77,70 @@ class MinutesApp:
         f = self.settings_tab
         pad = {"padx": 10, "pady": 6}
 
-        ttk.Label(f, text="خادم Ollama المحلي (Host):", font=FONT).grid(row=0, column=1, sticky="e", **pad)
-        self.host_var = tk.StringVar(value=self.cfg.get("ollama_host", "http://localhost:11434"))
-        ttk.Entry(f, textvariable=self.host_var, font=FONT, width=40, justify="right").grid(row=0, column=0, **pad)
+        ttk.Label(f, text="محرك التوليد:", font=FONT).grid(row=0, column=1, sticky="e", **pad)
+        self.backend_var = tk.StringVar(value=self.cfg.get("llm_backend", "ollama"))
+        backend_frame = ttk.Frame(f)
+        backend_frame.grid(row=0, column=0, sticky="w", **pad)
+        ttk.Radiobutton(backend_frame, text="Ollama (خادم محلي)", variable=self.backend_var,
+                        value="ollama").pack(side="right", padx=4)
+        ttk.Radiobutton(backend_frame, text="نموذج محلي مباشر (GGUF عبر llama-cpp-python)",
+                        variable=self.backend_var, value="local").pack(side="right", padx=4)
 
-        ttk.Label(f, text="النموذج المحلي (Model):", font=FONT).grid(row=1, column=1, sticky="e", **pad)
+        ttk.Label(f, text="خادم Ollama المحلي (Host):", font=FONT).grid(row=1, column=1, sticky="e", **pad)
+        self.host_var = tk.StringVar(value=self.cfg.get("ollama_host", "http://localhost:11434"))
+        ttk.Entry(f, textvariable=self.host_var, font=FONT, width=40, justify="right").grid(row=1, column=0, **pad)
+
+        ttk.Label(f, text="مجلد ملفات النماذج المحلية (GGUF):", font=FONT).grid(row=2, column=1, sticky="e", **pad)
+        self.local_models_var = tk.StringVar(value=self.cfg.get("local_models_folder", ""))
+        ttk.Entry(f, textvariable=self.local_models_var, font=FONT, width=40, justify="right").grid(row=2, column=0, **pad)
+        ttk.Button(f, text="استعراض...", command=self._browse_local_models).grid(row=2, column=2, **pad)
+
+        ttk.Label(f, text="النموذج (Model):", font=FONT).grid(row=3, column=1, sticky="e", **pad)
         self.model_var = tk.StringVar(value=self.cfg.get("ollama_model", ""))
         self.model_combo = ttk.Combobox(f, textvariable=self.model_var, font=FONT, width=37, justify="right")
-        self.model_combo.grid(row=1, column=0, **pad)
-        ttk.Button(f, text="تحديث قائمة النماذج", command=self._refresh_models).grid(row=1, column=2, **pad)
+        self.model_combo.grid(row=3, column=0, **pad)
+        ttk.Button(f, text="تحديث قائمة النماذج", command=self._refresh_models).grid(row=3, column=2, **pad)
 
-        ttk.Label(f, text="مجلد أرشيف محاضر مجلس الكلية السابقة:", font=FONT).grid(row=2, column=1, sticky="e", **pad)
+        ttk.Label(f, text="مجلد أرشيف محاضر مجلس الكلية السابقة:", font=FONT).grid(row=4, column=1, sticky="e", **pad)
         self.archive_var = tk.StringVar(value=self.cfg.get("archive_folder", ""))
-        ttk.Entry(f, textvariable=self.archive_var, font=FONT, width=40, justify="right").grid(row=2, column=0, **pad)
-        ttk.Button(f, text="استعراض...", command=self._browse_archive).grid(row=2, column=2, **pad)
+        ttk.Entry(f, textvariable=self.archive_var, font=FONT, width=40, justify="right").grid(row=4, column=0, **pad)
+        ttk.Button(f, text="استعراض...", command=self._browse_archive).grid(row=4, column=2, **pad)
 
-        ttk.Label(f, text="ملف النموذج (القالب) لمحضر مجلس الكلية:", font=FONT).grid(row=3, column=1, sticky="e", **pad)
+        ttk.Label(f, text="ملف النموذج (القالب) لمحضر مجلس الكلية:", font=FONT).grid(row=5, column=1, sticky="e", **pad)
         self.template_var = tk.StringVar(value=self.cfg.get("template_path", ""))
-        ttk.Entry(f, textvariable=self.template_var, font=FONT, width=40, justify="right").grid(row=3, column=0, **pad)
-        ttk.Button(f, text="استعراض...", command=self._browse_template).grid(row=3, column=2, **pad)
+        ttk.Entry(f, textvariable=self.template_var, font=FONT, width=40, justify="right").grid(row=5, column=0, **pad)
+        ttk.Button(f, text="استعراض...", command=self._browse_template).grid(row=5, column=2, **pad)
 
-        ttk.Separator(f, orient="horizontal").grid(row=4, column=0, columnspan=3, sticky="ew", pady=10)
+        ttk.Separator(f, orient="horizontal").grid(row=6, column=0, columnspan=3, sticky="ew", pady=10)
         ttk.Label(f, text="إعدادات تبويب \"إنشاء موضوع جديد لمحضر القسم\"", font=FONT_BOLD).grid(
-            row=5, column=0, columnspan=3, sticky="e", padx=10)
+            row=7, column=0, columnspan=3, sticky="e", padx=10)
 
-        ttk.Label(f, text="مجلد أرشيف محاضر القسم السابقة:", font=FONT).grid(row=6, column=1, sticky="e", **pad)
+        ttk.Label(f, text="مجلد أرشيف محاضر القسم السابقة:", font=FONT).grid(row=8, column=1, sticky="e", **pad)
         self.dept_archive_var = tk.StringVar(value=self.cfg.get("dept_archive_folder", ""))
-        ttk.Entry(f, textvariable=self.dept_archive_var, font=FONT, width=40, justify="right").grid(row=6, column=0, **pad)
-        ttk.Button(f, text="استعراض...", command=self._browse_dept_archive).grid(row=6, column=2, **pad)
+        ttk.Entry(f, textvariable=self.dept_archive_var, font=FONT, width=40, justify="right").grid(row=8, column=0, **pad)
+        ttk.Button(f, text="استعراض...", command=self._browse_dept_archive).grid(row=8, column=2, **pad)
 
-        ttk.Label(f, text="ملف النموذج (القالب) لمحضر مجلس القسم:", font=FONT).grid(row=7, column=1, sticky="e", **pad)
+        ttk.Label(f, text="ملف النموذج (القالب) لمحضر مجلس القسم:", font=FONT).grid(row=9, column=1, sticky="e", **pad)
         self.dept_template_var = tk.StringVar(value=self.cfg.get("dept_template_path", ""))
-        ttk.Entry(f, textvariable=self.dept_template_var, font=FONT, width=40, justify="right").grid(row=7, column=0, **pad)
-        ttk.Button(f, text="استعراض...", command=self._browse_dept_template).grid(row=7, column=2, **pad)
+        ttk.Entry(f, textvariable=self.dept_template_var, font=FONT, width=40, justify="right").grid(row=9, column=0, **pad)
+        ttk.Button(f, text="استعراض...", command=self._browse_dept_template).grid(row=9, column=2, **pad)
 
-        ttk.Button(f, text="حفظ الإعدادات", command=self._save_settings).grid(row=8, column=0, columnspan=3, pady=16)
+        ttk.Button(f, text="حفظ الإعدادات", command=self._save_settings).grid(row=10, column=0, columnspan=3, pady=16)
 
         self.settings_status = ttk.Label(f, text="", font=FONT, foreground="green")
-        self.settings_status.grid(row=9, column=0, columnspan=3)
+        self.settings_status.grid(row=11, column=0, columnspan=3)
 
         note = (
             "ملاحظات:\n"
-            "- يجب تشغيل Ollama محليًا (ollama serve) وتثبيت نموذج يدعم العربية جيدًا،\n"
-            "  مثل: ollama pull qwen2.5:7b-instruct  أو  ollama pull aya-expanse\n"
-            "- الأداة لا تتصل بالإنترنت أثناء العمل؛ كل المعالجة تتم على جهازك.\n"
-            "- عدد أعضاء مجلس الكلية في المخرج النهائي يطابق ما هو موجود في ملف القالب.\n"
+            "- \"Ollama\" يتطلب تثبيت تطبيق Ollama وتشغيله (يحتاج macOS 14 فأعلى في نسخته الحالية).\n"
+            "- \"نموذج محلي مباشر\" يعمل بأي إصدار من macOS عبر: pip3 install llama-cpp-python\n"
+            "  ثم تحميل ملف نموذج بصيغة GGUF (مثل نسخة Qwen2.5-3B-Instruct GGUF) ووضعه في المجلد أعلاه.\n"
+            "- الأداة لا تتصل بالإنترنت أثناء العمل في الحالتين؛ كل المعالجة تتم على جهازك.\n"
+            "- عدد أعضاء المجلس في المخرج النهائي يطابق ما هو موجود في ملف القالب.\n"
             "  إن تغيّر تشكيل الأعضاء، عدّل القالب نفسه أولًا."
         )
         ttk.Label(f, text=note, font=FONT, justify="right", foreground="#555").grid(
-            row=10, column=0, columnspan=3, sticky="e", padx=10, pady=20)
+            row=12, column=0, columnspan=3, sticky="e", padx=10, pady=20)
 
     def _browse_archive(self):
         path = filedialog.askdirectory(title="اختر مجلد أرشيف محاضر مجلس الكلية")
@@ -147,9 +162,22 @@ class MinutesApp:
         if path:
             self.dept_template_var.set(path)
 
+    def _browse_local_models(self):
+        path = filedialog.askdirectory(title="اختر مجلد ملفات النماذج المحلية (GGUF)")
+        if path:
+            self.local_models_var.set(path)
+
+    def _current_engine(self, model: str) -> Engine:
+        return Engine(
+            backend=self.backend_var.get(),
+            host=self.host_var.get().strip(),
+            model=model,
+            models_folder=self.local_models_var.get().strip(),
+        )
+
     def _refresh_models(self):
         try:
-            models = list_models(self.host_var.get())
+            models = list_models(self.backend_var.get(), self.host_var.get().strip(), self.local_models_var.get().strip())
         except OllamaError as e:
             messagebox.showerror("خطأ", str(e))
             return
@@ -160,8 +188,10 @@ class MinutesApp:
 
     def _save_settings(self):
         self.cfg.update({
+            "llm_backend": self.backend_var.get(),
             "ollama_host": self.host_var.get().strip(),
             "ollama_model": self.model_var.get().strip(),
+            "local_models_folder": self.local_models_var.get().strip(),
             "archive_folder": self.archive_var.get().strip(),
             "template_path": self.template_var.get().strip(),
             "dept_archive_folder": self.dept_archive_var.get().strip(),
@@ -341,11 +371,11 @@ class MinutesApp:
         self._run_generation(list(range(len(self.topics_flat))))
 
     def _run_generation(self, indices):
-        host = self.host_var.get().strip()
         model = self.model_var.get().strip()
         if not model:
-            messagebox.showwarning("تنبيه", "الرجاء اختيار نموذج Ollama من تبويب الإعدادات أولًا.")
+            messagebox.showwarning("تنبيه", "الرجاء اختيار نموذج من تبويب الإعدادات أولًا.")
             return
+        engine = self._current_engine(model)
 
         self.status_var.set(f"جارٍ توليد {len(indices)} موضوع/مواضيع...")
 
@@ -357,7 +387,7 @@ class MinutesApp:
                 if self.matcher:
                     precedents = self.matcher.find_similar(topic.title, topic.rationale, top_k=3)
                 try:
-                    data = draft_topic(host, model, topic, session.council_name, session.session_number,
+                    data = draft_topic(engine, topic, session.council_name, session.session_number,
                                         session.date, precedents)
                     data["title"] = topic.title
                     self._queue.put(("college", "ok", idx, data, n, len(indices)))
@@ -609,11 +639,11 @@ class MinutesApp:
         self._run_dept_mode_generation(list(range(len(self.dept_mode_topics))))
 
     def _run_dept_mode_generation(self, indices):
-        host = self.host_var.get().strip()
         model = self.model_var.get().strip()
         if not model:
-            messagebox.showwarning("تنبيه", "الرجاء اختيار نموذج Ollama من تبويب الإعدادات أولًا.")
+            messagebox.showwarning("تنبيه", "الرجاء اختيار نموذج من تبويب الإعدادات أولًا.")
             return
+        engine = self._current_engine(model)
 
         self.dept_mode_status_var.set(f"جارٍ توليد {len(indices)} موضوع/مواضيع...")
 
@@ -624,7 +654,7 @@ class MinutesApp:
                 if self.dept_mode_matcher:
                     precedents = self.dept_mode_matcher.find_similar(topic.title, topic.rationale, top_k=3)
                 try:
-                    data = draft_new_topic(host, model, topic.title, topic.rationale, precedents)
+                    data = draft_new_topic(engine, topic.title, topic.rationale, precedents)
                     data["title"] = topic.title
                     self._queue.put(("dept_mode", "ok", idx, data, n, len(indices)))
                 except OllamaError as e:
