@@ -163,7 +163,7 @@ class MinutesApp:
         left = ttk.Frame(mid)
         left.pack(side="right", fill="y")
         ttk.Label(left, text="مواضيع محضر القسم", font=FONT_BOLD).pack(anchor="e")
-        self.topics_list = tk.Listbox(left, font=FONT, width=45, height=20, justify="right", exportselection=False)
+        self.topics_list = tk.Listbox(left, font=FONT, width=45, height=20, exportselection=False)
         self.topics_list.pack(fill="y", expand=True, pady=4)
         self.topics_list.bind("<<ListboxSelect>>", self._on_select_topic)
 
