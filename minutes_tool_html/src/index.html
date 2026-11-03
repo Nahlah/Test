@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>مساعد إعداد محاضر المجالس</title>
+<style>
+/*__STYLES__*/
+</style>
+</head>
+<body>
+<div id="unsupported" class="unsupported" hidden>
+  <h2>المتصفح الحالي لا يدعم تشغيل الأداة</h2>
+  <p>افتحي الملف في أحدث إصدار من Google Chrome أو Microsoft Edge أو Safari (الإصدار 16.4 أو أحدث).</p>
+</div>
+
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-college">كلية الحوسبة والمعلوماتية</div>
+    <h1>مساعد إعداد محاضر المجالس</h1>
+    <div class="brand-sub">إعداد محاضر مجلس الكلية ومجالس الأقسام بالاستناد إلى الموضوعات المرجعية والمصادر الحالية</div>
+    <div class="brand-ver">نسخة 8.5 — HTML</div>
+  </div>
+  <img class="logo" alt="شعار الجامعة" src="__LOGO__">
+</header>
+
+<nav class="tabs" role="tablist">
+  <button class="tab" role="tab" data-panel="panel-settings">الإعدادات</button>
+  <button class="tab" role="tab" data-panel="panel-college">مجلس الكلية</button>
+  <button class="tab" role="tab" data-panel="panel-dept">مجلس القسم</button>
+</nav>
+
+<!-- ============================================================ settings -->
+<main id="panel-settings" class="panel" role="tabpanel">
+  <section class="card">
+    <h2>محاضر مجلس الكلية المرجعية</h2>
+    <div class="row-actions">
+      <button id="btn-archive-college" class="primary">اختيار المجلد...</button>
+      <button id="btn-refresh-college">تحديث من المجلد</button>
+    </div>
+    <div id="st-archive-college" class="status muted"></div>
+  </section>
+  <section class="card">
+    <h2>قالب Word لمحضر مجلس الكلية</h2>
+    <div class="row-actions"><button id="btn-template-college" class="primary">اختيار الملف...</button></div>
+    <div id="st-template-college" class="status muted"></div>
+  </section>
+  <section class="card">
+    <h2>محاضر الأقسام المرجعية (علوم الحاسب وتقنية المعلومات)</h2>
+    <div class="row-actions">
+      <button id="btn-archive-department" class="primary">اختيار المجلد...</button>
+      <button id="btn-refresh-department">تحديث من المجلد</button>
+    </div>
+    <div id="st-archive-department" class="status muted"></div>
+  </section>
+  <section class="card two">
+    <div>
+      <h2>قالب Word لمجلس قسم علوم الحاسب</h2>
+      <div class="row-actions"><button id="btn-template-cs" class="primary">اختيار الملف...</button></div>
+      <div id="st-template-cs" class="status muted"></div>
+    </div>
+    <div>
+      <h2>قالب Word لمجلس قسم تقنية المعلومات</h2>
+      <div class="row-actions"><button id="btn-template-it" class="primary">اختيار الملف...</button></div>
+      <div id="st-template-it" class="status muted"></div>
+    </div>
+  </section>
+  <p id="st-storage" class="note"></p>
+
+  <section class="card">
+    <h2>نبذة عن البرنامج</h2>
+    <p>أداة مساعدة لإعداد محاضر مجلس الكلية ومجالس الأقسام. تعتمد على فصل بيانات الحالة الحالية عن أسلوب الصياغة المرجعي: تُقرأ البيانات الحالية من محاضر الأقسام واللجان أو من ملفات Excel وWord وPDF والنماذج المختلفة، ثم يُبحث في المحاضر المرجعية عن أقرب موضوع للاستفادة من أسلوب الصياغة والإجراءات المتكررة. تبقى الأسماء والأرقام والجداول والتفاصيل الحالية مرتبطة بمصدرها، مع إتاحة مراجعة جميع الحقول وتعديلها قبل تصدير المحضر إلى Word.</p>
+  </section>
+  <section class="card">
+    <h2>طريقة الاستخدام باختصار</h2>
+    <ol class="steps">
+      <li>تُحدد مجلدات المحاضر المرجعية وقوالب Word من الإعدادات، ويحفظها المتصفح للمرات القادمة.</li>
+      <li>في مجلس الكلية تُضاف مصادر الموضوعات الحالية من محاضر الأقسام واللجان أو من موضوعات مباشرة.</li>
+      <li>في مجلس القسم تُحدد الجهة (علوم الحاسب أو تقنية المعلومات) ونطاق البحث، ثم تُضاف البيانات الحالية من Excel أو Word أو PDF أو إدخال يدوي.</li>
+      <li>يُطابق كل موضوع بأقرب موضوع مرجعي ضمن النطاق المحدد، مع إمكانية مراجعة المصدر والموضوع المرجعي وتغييره يدويًا.</li>
+      <li>تُراجع الحقول الناتجة وتُعدّل عند الحاجة، ثم يُصدر المحضر النهائي إلى Word.</li>
+    </ol>
+    <p class="note">عند إضافة محاضر جديدة إلى المجلد المرجعي اضغطي «تحديث من المجلد». يُختار الموضوع المرجعي تلقائيًا وفق درجة التشابه، ويمكن تغييره يدويًا عند الحاجة. وتحفظ الأداة الاختيارات اليدوية محليًا للاستفادة منها في ترجيح الموضوع المرجعي للموضوعات المشابهة لاحقًا.</p>
+  </section>
+  <section class="card">
+    <h2>الاختيارات المتعلّمة</h2>
+    <div id="st-learning" class="status muted"></div>
+    <div class="row-actions">
+      <button id="btn-learning-export">حفظ نسخة احتياطية...</button>
+      <button id="btn-learning-import">استيراد نسخة احتياطية...</button>
+    </div>
+    <p class="note">يمكن استيراد ملف reference_learning.json من النسخة السابقة (المجلد ‎.college_minutes_tool في مجلد المستخدم) لنقل الاختيارات المحفوظة.</p>
+  </section>
+</main>
+
+<!-- ============================================================ college -->
+<main id="panel-college" class="panel" role="tabpanel" hidden>
+  <section class="card">
+    <h2>إضافة مصادر المواضيع</h2>
+    <div class="row-actions">
+      <button id="c-add-dept" class="primary">إضافة محضر قسم...</button>
+      <button id="c-add-committee">إضافة محضر اللجنة الثلاثية للابتعاث...</button>
+      <button id="c-add-manual">إضافة موضوع خاص بمجلس الكلية...</button>
+      <span class="spacer"></span>
+      <button id="c-remove" class="danger">حذف الموضوع المعروض</button>
+    </div>
+  </section>
+  <section class="card">
+    <h2>بيانات جلسة محضر مجلس الكلية الجديد</h2>
+    <div class="meta-grid">
+      <label for="c-meta-session_number">رقم الجلسة:</label><input id="c-meta-session_number" dir="rtl">
+      <label for="c-meta-day">اليوم:</label><input id="c-meta-day" dir="rtl">
+      <label for="c-meta-date">التاريخ:</label><input id="c-meta-date" dir="rtl">
+      <label for="c-meta-place">المكان:</label><input id="c-meta-place" dir="rtl">
+      <label for="c-meta-time">الوقت:</label><input id="c-meta-time" dir="rtl">
+    </div>
+  </section>
+  <div class="work">
+    <section class="card list-col">
+      <h2>مواضيع مجلس الكلية</h2>
+      <div id="c-list" class="topic-list"></div>
+      <div class="btn-row">
+        <button id="c-include-all">تحديد الكل</button>
+        <button id="c-exclude-all">إلغاء الكل</button>
+      </div>
+      <fieldset class="order">
+        <legend>ترتيب المواضيع في المحضر</legend>
+        <div class="btn-row">
+          <button id="c-up">↑ رفع الموضوع</button>
+          <button id="c-down">↓ خفض الموضوع</button>
+        </div>
+      </fieldset>
+      <button id="c-generate" class="primary block">توليد مواضيع مجلس الكلية</button>
+    </section>
+    <section class="card detail-col">
+      <div class="source-row">
+        <div id="c-source-info" class="source-info">المصدر الحالي: لم يتم اختيار موضوع.</div>
+        <button id="c-show-source">عرض نص المصدر</button>
+      </div>
+      <div id="c-gen-info" class="gen-info">الموضوع المرجعي: لم يتم التوليد بعد.</div>
+      <div class="ref-row">
+        <span class="ref-note">يتم اختيار الموضوع المرجعي تلقائيًا من محاضر مجلس الكلية.</span>
+        <button id="c-choose-ref">تغيير الموضوع المرجعي...</button>
+        <button id="c-show-ref">عرض الموضوع المرجعي</button>
+      </div>
+      <div id="c-fields" class="fields"></div>
+    </section>
+  </div>
+  <div class="bottom-bar">
+    <div id="c-status" class="status-line">أضيفي المصادر، ثم اختاري مواضيع مجلس الكلية من القائمة.</div>
+    <button id="c-export" class="primary">تصدير محضر Word</button>
+  </div>
+</main>
+
+<!-- ============================================================ department -->
+<main id="panel-dept" class="panel" role="tabpanel" hidden>
+  <section class="card">
+    <h2>إعداد محضر مجلس القسم</h2>
+    <p class="note">تحويل بيانات الطلبات الحالية إلى صياغة مجلس القسم بالاستناد إلى موضوعات مرجعية من محاضر الأقسام السابقة.</p>
+    <div class="row-actions">
+      <label for="d-target">القسم الذي سيُعد محضره:</label><select id="d-target"></select>
+      <label for="d-scope">نطاق البحث:</label><select id="d-scope"></select>
+    </div>
+  </section>
+  <section class="card">
+    <h2>مصادر البيانات الحالية</h2>
+    <div class="row-actions">
+      <button id="d-add-manual" class="primary">إضافة موضوع يدوي...</button>
+      <button id="d-attach">إرفاق ملف بيانات للموضوع المعروض...</button>
+      <button id="d-import">استيراد موضوعات من ملف...</button>
+      <span class="spacer"></span>
+      <button id="d-remove" class="danger">حذف الموضوع المعروض</button>
+    </div>
+  </section>
+  <section class="card">
+    <h2>بيانات جلسة مجلس القسم الجديد</h2>
+    <div class="meta-grid">
+      <label for="d-meta-session_number">رقم الجلسة:</label><input id="d-meta-session_number" dir="rtl">
+      <label for="d-meta-day">اليوم:</label><input id="d-meta-day" dir="rtl">
+      <label for="d-meta-date">التاريخ:</label><input id="d-meta-date" dir="rtl">
+      <label for="d-meta-place">المكان:</label><input id="d-meta-place" dir="rtl">
+      <label for="d-meta-time">الوقت:</label><input id="d-meta-time" dir="rtl">
+    </div>
+  </section>
+  <div class="work">
+    <section class="card list-col">
+      <h2>مواضيع مجلس القسم</h2>
+      <div id="d-list" class="topic-list"></div>
+      <div class="btn-row">
+        <button id="d-include-all">تحديد الكل</button>
+        <button id="d-exclude-all">إلغاء الكل</button>
+      </div>
+      <fieldset class="order">
+        <legend>ترتيب المواضيع في المحضر</legend>
+        <div class="btn-row">
+          <button id="d-up">↑ رفع الموضوع</button>
+          <button id="d-down">↓ خفض الموضوع</button>
+        </div>
+      </fieldset>
+      <button id="d-generate" class="primary block">توليد مواضيع مجلس القسم</button>
+    </section>
+    <section class="card detail-col">
+      <div class="source-row">
+        <div id="d-source-info" class="source-info">المصدر الحالي: لم يتم اختيار موضوع.</div>
+        <button id="d-show-source">عرض المصدر</button>
+      </div>
+      <div id="d-gen-info" class="gen-info">الموضوع المرجعي: لم يتم التوليد بعد.</div>
+      <div class="ref-row">
+        <span class="ref-note">يُختار الموضوع المرجعي من محاضر الأقسام وفق نطاق البحث المحدد.</span>
+        <button id="d-choose-ref">تغيير الموضوع المرجعي...</button>
+        <button id="d-show-ref">عرض الموضوع المرجعي</button>
+      </div>
+      <div id="d-fields" class="fields"></div>
+    </section>
+  </div>
+  <div class="bottom-bar">
+    <div id="d-status" class="status-line">تُضاف مصادر البيانات الحالية ثم تُولد الموضوعات بالاستناد إلى محاضر الأقسام المرجعية.</div>
+    <button id="d-export" class="primary">تصدير محضر Word</button>
+  </div>
+</main>
+
+<!--__SCRIPTS__-->
+</body>
+</html>
