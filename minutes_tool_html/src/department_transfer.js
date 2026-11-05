@@ -511,6 +511,50 @@ const DeptTransfer = (() => {
     return selected.map(([k, v]) => `${k}: ${v}`).join("\n");
   }
 
+
+  // ---------------------------------------------------------------- اسم مقدم الطلب في كل النصوص (تعديل 11/2026)
+  // الاسم بعد «اللقب/» ينتهي عند الفاصلة أو الرتبة أو كلمات مثل بقسم/بصرف/لحضور، حتى لو لم توجد فاصلة.
+  const _SLOT_HON = "((?:ال|لل)(?:أستاذة\\s+الدكتورة|أستاذ\\s+الدكتور|دكتورة|دكتور|محاضرة|محاضر|أستاذة|أستاذ|معيدة|معيد)|د\\.)";
+  // يحافظ على «لل» إذا كانت في النص الأصلي (للمحاضرة/ ...)
+  const _keep_prefix = (orig, nw) => (orig && orig.startsWith("لل") && nw && nw.startsWith("ال") ? "ل" + nw.slice(1) : nw);
+  const _NAME_STOP = new Set(["استاذ", "استاذه", "محاضر", "محاضره", "معيد", "معيده", "بقسم", "في", "قسم", "بكليه", "كليه",
+    "بصرف", "صرف", "لحضور", "حضور", "علي", "عن", "من", "الي", "الى", "للعام", "والذي", "والتي", "التي", "الذي", "لصرف",
+    "للنشر", "بدل", "مكافاه", "لبحثه", "لبحثها", "عضو", "عضوه", "المحاضر", "المحاضره", "الدكتور", "الدكتوره", "و"]);
+  function _slot_names(text) {
+    const out = [];
+    const rx = new RegExp(_SLOT_HON + "\\s*/\\s*([^\\n/،,.:؛()]+)", "gu");
+    for (const m of String(text || "").matchAll(rx)) {
+      const words = m[2].trim().split(/\s+/);
+      const name = [];
+      for (const w of words) {
+        if (_NAME_STOP.has(_norm(w)) || name.length >= 5) break;
+        name.push(w);
+      }
+      if (name.length >= 2) out.push({ honor: m[1], name: name.join(" "), index: m.index, length: m[0].length - m[2].length + name.join(" ").length + (m[2].length - m[2].trimStart().length) });
+    }
+    return out;
+  }
+  function _replace_person_slots(text, old_names, honor, name) {
+    if (!text || !name) return text;
+    const cur = _norm(name);
+    const olds = old_names.map(_norm).filter((n) => n && n !== cur);
+    if (!olds.length) return text;
+    let out = "", last = 0;
+    for (const slot of _slot_names(text)) {
+      const n = _norm(slot.name);
+      if (n === cur || !olds.some((o) => n === o || n.startsWith(o) || o.startsWith(n))) continue;
+      out += text.slice(last, slot.index) + `${_keep_prefix(slot.honor, honor || slot.honor)}/ ${name}`;
+      last = slot.index + slot.length;
+    }
+    return out + text.slice(last);
+  }
+
+  function _build_title_dep(title, reference, target_department) {
+    const ref_dep = strip(reference.council_name || "");
+    if (!ref_dep || _norm(ref_dep) === _norm(target_department)) return title;
+    return title.split(`قسم ${ref_dep}`).join(`قسم ${target_department}`).split(ref_dep).join(target_department);
+  }
+
   function build_department_from_reference(current_topic, reference, score = null, target_department = "") {
     const ref_title = reference.title ?? "";
     const ref_rationale = reference.rationale ?? "";
@@ -553,6 +597,29 @@ const DeptTransfer = (() => {
     if (strip(current_topic.decision ?? "")) decision = strip(current_topic.decision);
     if (strip(current_topic.document_ref ?? "")) document_ref = strip(current_topic.document_ref);
     if (strip(current_topic.action_required ?? "")) action_required = strip(current_topic.action_required);
+
+    // أي اسم قديم بقي في العنوان أو الحيثيات أو التوصية يُستبدل باسم مقدم الطلب الحالي
+    {
+      const old_names = _slot_names(`${ref_title}\n${ref_rationale}\n${reference.decision ?? ""}`).map((x) => x.name);
+      const [cur_honor, cur_name] = _current_applicant(current_topic, target_department);
+      if (profile !== "promotion" && old_names.length && cur_name && !re.search("[ـ_]{3,}", cur_name)) {
+        const honor = (o) => cur_honor || _gender_correct_honorific(o, current_topic);
+        const fix = (t) => _apply_current_gender_grammar(_replace_person_slots(t, old_names, "", cur_name).replace(
+          new RegExp(_SLOT_HON + "\\s*/\\s*" + cur_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gu"),
+          (m, h) => `${_keep_prefix(h, honor(h.startsWith("لل") ? "ا" + h.slice(1) : h))}/ ${cur_name}`), current_topic);
+        if (profile !== "promotion") {
+          // العنوان من العنوان المرجعي كاملًا إذا قُصّ عند استخراج الاسم
+          title = fix(title);
+          // إذا قُصّ العنوان عند استخراج الاسم (العنوان الحالي بداية العنوان المرجعي فقط) نكمله من العنوان المرجعي
+          let alt = strip(fix(ref_title));
+          if (target_department) alt = _build_title_dep(alt, reference, target_department);
+          const nt = _norm(strip(title, " .،")), na = _norm(alt);
+          if (alt && alt.includes(cur_name) && (!title.includes(cur_name) || (na.startsWith(nt) && na.length > nt.length + 3))) title = alt;
+        }
+        rationale = fix(rationale);
+        if (!strip(current_topic.decision ?? "")) decision = fix(decision);
+      }
+    }
 
     const ref_department = strip(reference.council_name || "");
     if (target_department && ref_department && normalize_ar(ref_department) !== normalize_ar(target_department)) {
