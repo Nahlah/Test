@@ -22,6 +22,60 @@ const AppLogic = (() => {
     return PY.len(t) <= n ? t : Array.from(t).slice(0, n - 1).join("") + "…";
   }
 
+  // ================================================================= shared helpers (تعديلات 11/2026)
+  const _DIGITS = { "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+    "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4", "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9" };
+  const _ascii_digits = (s) => String(s || "").replace(/[٠-٩۰-۹]/g, (d) => _DIGITS[d]);
+
+  // مفتاح ترتيب زمني تقريبي للمحضر: التاريخ (هجري أو ميلادي) ثم رقم الجلسة.
+  function topic_time_key(p) {
+    const text = _ascii_digits(p.session_date || "");
+    let y = 0, m = 0, d = 0;
+    const nums = (text.match(/\d+/g) || []).map(Number);
+    const yi = nums.findIndex((n) => n >= 1000);
+    if (yi >= 0) {
+      y = nums[yi];
+      const rest = nums.filter((_, i) => i !== yi);
+      if (yi === 0) { m = rest[0] || 0; d = rest[1] || 0; } else { d = rest[0] || 0; m = rest[1] || 0; }
+      if (y < 1700) y = y * 0.970224 + 621.5774; // هجري → ميلادي تقريبًا
+    }
+    const sess = Number((_ascii_digits(p.session_number || "").match(/\d+/) || [0])[0]);
+    return y * 10000 + m * 100 + d + sess / 1000;
+  }
+
+  // من المرشحين [[topic, score], ...] من نفس النوع: يقدّم الأحدث تاريخًا (لاتباع صيغة آخر المحاضر).
+  function prefer_newest(matches, same_kind, min_score = 0.30) {
+    if (!matches.length) return matches;
+    const pool = matches.filter(([p, s]) => s >= min_score && same_kind(p));
+    if (pool.length < 2) return matches;
+    let best = pool[0];
+    for (const cand of pool) if (topic_time_key(cand[0]) > topic_time_key(best[0])) best = cand;
+    if (best === matches[0]) return matches;
+    return [[best[0], Math.max(best[1], matches[0][1])]].concat(matches.filter((x) => x !== best));
+  }
+
+  // بحث حر في الأرشيف كله: تطابق نصي في العنوان ثم في النص، ثم الأقرب تشابهًا. بلا بحث: الأحدث أولًا.
+  function archive_search(pool, query, limit = 150) {
+    const q = normalize_ar(query || "");
+    const key = (p) => JSON.stringify([p.source_file, p.title]);
+    if (!q) return pool.slice().sort((a, b) => topic_time_key(b) - topic_time_key(a)).slice(0, limit);
+    const inTitle = [], inBody = [];
+    for (const p of pool) {
+      if (normalize_ar(p.title ?? "").includes(q)) inTitle.push(p);
+      else if (normalize_ar(`${p.rationale ?? ""} ${p.decision ?? ""} ${p.attachments ?? ""}`).includes(q)) inBody.push(p);
+    }
+    const byDate = (a, b) => topic_time_key(b) - topic_time_key(a);
+    inTitle.sort(byDate); inBody.sort(byDate);
+    const similar = pool.length ? new TopicMatcher(pool).find_similar(query, "", Math.min(limit, pool.length), 0.25).map(([p]) => p) : [];
+    const seen = new Set();
+    const out = [];
+    for (const p of inTitle.concat(inBody, similar)) {
+      const k = key(p);
+      if (!seen.has(k)) { seen.add(k); out.push(p); }
+    }
+    return out.slice(0, limit);
+  }
+
   // ================================================================= college council
   class College {
     constructor() {
@@ -160,28 +214,36 @@ const AppLogic = (() => {
       if (!this.archive_topics.length) return [];
       item._learned_reference_used = false;
       const [current_family, reference_pool] = P.reference_topics_for_current(this.archive_topics, topic.title, topic.rationale);
-      if (P.STRICT_REFERENCE_FAMILIES.has(current_family) && !reference_pool.length) return [];
       const override = item.precedent_override;
+      if (P.STRICT_REFERENCE_FAMILIES.has(current_family) && !reference_pool.length && !override) return [];
       if (override) {
         const [source_file, title] = override;
-        for (const p of reference_pool) if (p.source_file === source_file && p.title === title) return [[p, 1.0]];
+        for (const p of this.archive_topics) if (p.source_file === source_file && p.title === title) return [[p, 1.0]];
         if (P.STRICT_REFERENCE_FAMILIES.has(current_family)) return [];
       }
       const learned = Learning.find_learned_reference(topic.title, topic.rationale, reference_pool, 0.74, "college");
       if (learned) {
         const [learned_ref, learned_score] = learned;
         item._learned_reference_used = true;
-        const normal = new TopicMatcher(reference_pool).find_similar(topic.title, topic.rationale, 8, 0.0);
+        const single_family = P.SINGLE_REFERENCE_FAMILIES.has(current_family);
+        const normal = new TopicMatcher(reference_pool).find_similar(topic.title, topic.rationale, single_family ? Math.max(8, reference_pool.length) : 8, 0.0);
         const out = [[learned_ref, Math.max(0.95, learned_score)]];
         const seen = new Set([JSON.stringify([learned_ref.source_file, learned_ref.title])]);
         for (const [p, score] of normal) {
           const key = JSON.stringify([p.source_file, p.title]);
           if (!seen.has(key)) { out.push([p, score]); seen.add(key); }
         }
-        return P.SINGLE_REFERENCE_FAMILIES.has(current_family) ? out.slice(0, 1) : out.slice(0, 8);
+        if (P.SINGLE_REFERENCE_FAMILIES.has(current_family)) return this._newest_of_family(out, current_family).slice(0, 1);
+        return out.slice(0, 8);
       }
-      const matches = new TopicMatcher(reference_pool).find_similar(topic.title, topic.rationale, 8, 0.0);
-      return P.SINGLE_REFERENCE_FAMILIES.has(current_family) ? matches.slice(0, 1) : matches;
+      const single = P.SINGLE_REFERENCE_FAMILIES.has(current_family);
+      const matches = new TopicMatcher(reference_pool).find_similar(topic.title, topic.rationale, single ? Math.max(8, reference_pool.length) : 8, 0.0);
+      return single ? this._newest_of_family(matches, current_family).slice(0, 1) : matches;
+    }
+
+    // بدل التميز والتعيين والترقية: صيغة آخر محضر من نفس النوع (مثل عدد المستندات والمرفقات).
+    _newest_of_family(matches, family) {
+      return prefer_newest(matches, (p) => P.topic_family(p.title ?? "", p.rationale ?? "") === family, 0.0);
     }
 
     generate_item(idx) {
@@ -206,6 +268,7 @@ const AppLogic = (() => {
       }
       const session = item.session;
       const department_name = item.source_kind === "department" ? session.council_name : "";
+      P.set_title_corpus(this.archive_topics);
       let data;
       if (item.precedent_override) {
         data = P.build_from_selected_reference(topic, department_name, session.session_number, session.date, top_reference);
@@ -220,6 +283,9 @@ const AppLogic = (() => {
           "وجدت موضوعات قريبة في مجلس الكلية، لكن التطابق غير كافٍ لتطبيق أحدها تلقائيًا. " +
           "استخدمي «تغيير الموضوع المرجعي» لاختيار الأنسب يدويًا.\n\nأقرب الموضوعات:\n" + suggestion,
         );
+      }
+      if (P.topic_family(topic.title ?? "", topic.rationale ?? "") !== "promotion" && !/ترقي/.test(data.title || "")) {
+        data.decision = P.sync_rank_with_title(data.title, data.decision);
       }
       data._reference_title = top_reference.title ?? "";
       data._reference_session = top_reference.session_number ?? "";
@@ -250,6 +316,10 @@ const AppLogic = (() => {
       const refs = this.find_precedents(item, cloneTopic(item.topic));
       if (refs.length) return [refs[0][0], refs[0][1], "مقترح تلقائيًا"];
       return [null, null, ""];
+    }
+
+    archive_search(query) {
+      return archive_search(this.archive_topics, query);
     }
 
     chooser_pool(idx) {
@@ -350,7 +420,7 @@ const AppLogic = (() => {
       if (!pool.length) return [];
       const override = item.reference_override;
       if (override) {
-        for (const p of pool) if (p.source_file === override[0] && p.title === override[1]) return [[p, 1.0]];
+        for (const p of this.archive_topics) if (p.source_file === override[0] && p.title === override[1]) return [[p, 1.0]];
       }
       const topic = item.topic;
       const learned = Learning.find_learned_reference(this.learning_source_title(topic), topic.rationale, pool, 0.74, "department");
@@ -365,9 +435,17 @@ const AppLogic = (() => {
           const k = JSON.stringify([x.source_file, x.title]);
           if (!seen.has(k)) { out.push([x, s]); seen.add(k); }
         }
-        return out.slice(0, 8);
+        return this._newest_of_profile(out.slice(0, 8), topic);
       }
-      return new TopicMatcher(pool).find_similar(topic.title, topic.rationale, 8, 0.0);
+      return this._newest_of_profile(new TopicMatcher(pool).find_similar(topic.title, topic.rationale, 8, 0.0), topic);
+    }
+
+    // نماذج الطلبات (بدل التميز، المؤتمر، التعيين، الترقية): صيغة آخر محضر من نفس النوع.
+    _newest_of_profile(matches, topic) {
+      if (!matches.length) return matches;
+      const profile = FormFields._profile_from_title(topic.title || "") || FormFields._profile_from_title(matches[0][0].title || "");
+      if (!profile) return matches;
+      return prefer_newest(matches, (p) => FormFields._profile_from_title(p.title || "") === profile, 0.30);
     }
 
     generate_item(idx) {
@@ -390,6 +468,9 @@ const AppLogic = (() => {
         throw new Error("درجة التشابه منخفضة. استخدمي «تغيير الموضوع المرجعي» لتحديد المرجع المناسب أو اعتبريه موضوعًا جديدًا.");
       }
       const data = DeptTransfer.build_department_from_reference(topic, ref, score, strip(this.target_department));
+      if (data._source_profile !== "promotion" && !/ترقي/.test(data.title || "")) {
+        data.decision = P.sync_rank_with_title(data.title, data.decision);
+      }
       data._learned_reference_used = !!item._learned_reference_used;
       return data;
     }
@@ -400,7 +481,7 @@ const AppLogic = (() => {
       const pool = this.scope_topics();
       const override = item.reference_override;
       if (override) {
-        for (const p of pool) if (p.source_file === override[0] && p.title === override[1]) return [p, 1.0, "مختار يدويًا"];
+        for (const p of this.archive_topics) if (p.source_file === override[0] && p.title === override[1]) return [p, 1.0, "مختار يدويًا"];
       }
       const data = item.generated || {};
       if (data._reference_title) {
@@ -422,6 +503,10 @@ const AppLogic = (() => {
       return refs;
     }
 
+    archive_search(query) {
+      return archive_search(this.archive_topics, query);
+    }
+
     chooser_search(query) {
       const pool = this.scope_topics();
       const q = strip(query);
@@ -432,5 +517,5 @@ const AppLogic = (() => {
     }
   }
 
-  return { College, Department, DEPARTMENTS, SCOPE_LABELS, dept_key, shortTitle, pct, cloneTopic };
+  return { College, Department, DEPARTMENTS, SCOPE_LABELS, dept_key, shortTitle, pct, cloneTopic, topic_time_key, prefer_newest, archive_search };
 })();

@@ -422,6 +422,126 @@ const App = (() => {
     UI.textPopup("الموضوع المرجعي من محاضر مجلس الكلية", header, raw);
   }
 
+  async function cApplyReference(p) {
+      const cur = college.current_index;
+      if (cur === null || !(cur >= 0 && cur < college.items.length)) {
+        await UI.error("تعذر التوليد", "لم يعد الموضوع الحالي متاحًا. أعيدي اختياره من القائمة.");
+        return;
+      }
+      const target = college.items[cur];
+      target.precedent_override = [p.source_file ?? "", p.title ?? ""];
+      target.new_topic_mode = false;
+      target._learned_reference_used = false;
+      $("#c-gen-info").textContent = `تم اختيار الموضوع المرجعي: ${p.source_file || ""} — جلسة ${p.session_number || ""} | جارٍ التوليد...`;
+      let data;
+      try {
+        data = college.generate_item(cur);
+      } catch (e) {
+        await UI.error("تعذر توليد الموضوع", errText(e));
+        cStatus(errText(e));
+        $("#c-gen-info").textContent = `تعذر التوليد بعد اختيار الموضوع المرجعي: ${errText(e)}`;
+        return;
+      }
+      target.generated = data;
+      cLoadItem(cur);
+      cRenderRows();
+      cStatus("تم توليد الموضوع باستخدام الموضوع المرجعي الذي تم اختياره يدويًا.");
+      try {
+        Learning.remember_reference_choice(target.topic.title, target.topic.rationale, p, "college");
+        cStatus(`تم توليد الموضوع وحفظ اختيار الموضوع المرجعي للتعرّف على الموضوعات المشابهة لاحقًا. (اختيارات متعلّمة: ${Learning.learning_count("college")})`);
+      } catch (e) { /* التوليد أهم من حفظ التعلم */ }
+  }
+
+
+  // ---------------------------------------------------------------- بحث حر في الأرشيف (مجلس الكلية / مجلس القسم)
+  function referenceText(ref) {
+    return `عنوان الموضوع:\n${ref.title || "-"}\n\nالحيثيات:\n${ref.rationale || "-"}\n\n` +
+      `التوصية / القرار:\n${ref.decision || "-"}\n\nالمستند:\n${ref.document_ref || "-"}\n\n` +
+      `المرفقات:\n${ref.attachments || "-"}\n\nالإجراء المطلوب:\n${ref.action_required || "-"}`;
+  }
+
+  async function searchArchive(kind) {
+    const isCollege = kind === "college";
+    const logic = isCollege ? college : dept;
+    if (!logic.archive_topics.length) {
+      await UI.warn("تنبيه", isCollege
+        ? "لا توجد محاضر مجلس كلية مرجعية محملة. اختاري مجلد المحاضر المرجعية من الإعدادات."
+        : "لا توجد محاضر أقسام مرجعية محملة. اختاري مجلد المحاضر المرجعية من الإعدادات.");
+      return;
+    }
+    const q = h("input", { type: "text", dir: "rtl", class: "wide", placeholder: "اكتبي أي كلمة: اسم، نوع الطلب، برنامج، جلسة..." });
+    const count = h("div", { class: "hint" });
+    const preview = h("textarea", { class: "readonly", readonly: true, dir: "rtl", rows: 12 });
+    preview.value = "اختاري موضوعًا من القائمة لعرض نصه كاملًا.";
+    let visible = [];
+    const current = () => {
+      const s = lb.selected();
+      return s >= 0 && s < visible.length ? visible[s] : null;
+    };
+    const lb = UI.listbox({
+      height: 11,
+      onSelect: () => {
+        const p = current();
+        if (!p) return;
+        preview.value = `المحضر: ${p.source_file || "-"} | ${p.council_name || ""} | الجلسة: ${p.session_number || "-"} | التاريخ: ${p.session_date || "-"}\n\n` + referenceText(p);
+        preview.scrollTop = 0;
+      },
+    });
+    const refresh = () => {
+      try {
+        visible = logic.archive_search(q.value);
+      } catch (e) {
+        visible = [];
+      }
+      lb.set(visible.map((p) => ({
+        label: (isCollege ? "" : `${p.council_name || ""} | `) + `جلسة ${p.session_number || ""} | ${p.session_date || ""} | ${L.shortTitle(p.title || "", 90)}`,
+      })));
+      count.textContent = strip(q.value)
+        ? `النتائج: ${visible.length} (من ${logic.archive_topics.length} موضوعًا في الأرشيف)`
+        : `كل موضوعات الأرشيف (${logic.archive_topics.length})، الأحدث أولًا — اكتبي للبحث.`;
+    };
+    let timer = null;
+    q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(refresh, 200); });
+    const body = h("div", { class: "form" },
+      h("label", { text: isCollege ? "البحث في كل محاضر مجلس الكلية (بدون تحديد موضوع):" : "البحث في كل محاضر مجالس الأقسام (بدون تحديد موضوع):" }),
+      q, count, lb.el, h("label", { text: "نص الموضوع المختار:" }), preview);
+    const ctl = UI.modal({
+      title: isCollege ? "بحث في أرشيف مجلس الكلية" : "بحث في أرشيف مجالس الأقسام",
+      body, wide: true,
+      buttons: [
+        {
+          label: "نسخ النص", close: false,
+          onClick: async () => {
+            const p = current();
+            if (!p) { await UI.info("تنبيه", "اختاري موضوعًا من القائمة أولًا."); return false; }
+            const text = referenceText(p);
+            try { await navigator.clipboard.writeText(text); }
+            catch (e) { preview.focus(); preview.select(); document.execCommand("copy"); }
+            (isCollege ? cStatus : dStatus)("تم نسخ نص الموضوع من الأرشيف.");
+            return false;
+          },
+        },
+        {
+          label: "استخدامه مرجعًا للموضوع المعروض", primary: true, close: false,
+          onClick: async () => {
+            const p = current();
+            if (!p) { await UI.info("تنبيه", "اختاري موضوعًا من القائمة أولًا."); return false; }
+            const idx = logic.current_index;
+            if (idx === null || !(idx >= 0 && idx < logic.items.length)) {
+              await UI.info("تنبيه", "لا يوجد موضوع معروض لربطه. يمكنك نسخ النص فقط، أو إضافة موضوع ثم اختياره.");
+              return false;
+            }
+            ctl.close();
+            if (isCollege) await cApplyReference(p); else await dApplyReference(p);
+            return false;
+          },
+        },
+        { label: "إغلاق" },
+      ],
+    });
+    refresh();
+  }
+
   async function cChoosePrecedent() {
     const idx = college.current_index;
     if (idx === null || !(idx >= 0 && idx < college.items.length)) { await UI.info("تنبيه", "اختاري موضوعًا أولًا."); return; }
@@ -447,34 +567,8 @@ const App = (() => {
       const s = lb.selected();
       if (s < 0) { await UI.info("تنبيه", "اختاري موضوعًا مرجعيًا من القائمة."); return false; }
       const p = visible[s];
-      const cur = college.current_index;
-      if (cur === null || !(cur >= 0 && cur < college.items.length)) {
-        await UI.error("تعذر التوليد", "لم يعد الموضوع الحالي متاحًا. أعيدي اختياره من القائمة.");
-        return false;
-      }
-      const target = college.items[cur];
-      target.precedent_override = [p.source_file ?? "", p.title ?? ""];
-      target.new_topic_mode = false;
-      target._learned_reference_used = false;
-      $("#c-gen-info").textContent = `تم اختيار الموضوع المرجعي: ${p.source_file || ""} — جلسة ${p.session_number || ""} | جارٍ التوليد...`;
       ctl.close();
-      let data;
-      try {
-        data = college.generate_item(cur);
-      } catch (e) {
-        await UI.error("تعذر توليد الموضوع", errText(e));
-        cStatus(errText(e));
-        $("#c-gen-info").textContent = `تعذر التوليد بعد اختيار الموضوع المرجعي: ${errText(e)}`;
-        return false;
-      }
-      target.generated = data;
-      cLoadItem(cur);
-      cRenderRows();
-      cStatus("تم توليد الموضوع باستخدام الموضوع المرجعي الذي تم اختياره يدويًا.");
-      try {
-        Learning.remember_reference_choice(target.topic.title, target.topic.rationale, p, "college");
-        cStatus(`تم توليد الموضوع وحفظ اختيار الموضوع المرجعي للتعرّف على الموضوعات المشابهة لاحقًا. (اختيارات متعلّمة: ${Learning.learning_count("college")})`);
-      } catch (e) { /* التوليد أهم من حفظ التعلم */ }
+      await cApplyReference(p);
       return false;
     };
     const lb = UI.listbox({ onActivate: () => choose(), height: 16 });
@@ -986,6 +1080,29 @@ const App = (() => {
     } else dStatus(`تم توليد جميع الموضوعات المحددة (${done.length}).`);
   }
 
+  async function dApplyReference(p) {
+      const idx = dept.current_index;
+      dept.items[idx].reference_override = [p.source_file ?? "", p.title ?? ""];
+      dept.items[idx].new_topic_mode = false;
+      let data;
+      try {
+        data = dept.generate_item(idx);
+      } catch (e) {
+        await UI.error("تعذر التوليد", errText(e));
+        return;
+      }
+      dept.items[idx].generated = data;
+      dLoadForm(idx);
+      dRefresh(idx);
+      try {
+        const t = dept.items[idx].topic;
+        Learning.remember_reference_choice(dept.learning_source_title(t), t.rationale, p, "department");
+        dStatus(`تم التوليد وحفظ اختيار الموضوع المرجعي للتعلّم المحلي. (اختيارات متعلّمة: ${Learning.learning_count("department")})`);
+      } catch (e) {
+        dStatus("تم التوليد باستخدام الموضوع المرجعي المختار.");
+      }
+  }
+
   async function dChooseReference() {
     const idx0 = dept.current_index;
     if (idx0 === null) { await UI.info("تنبيه", "اختاري موضوعًا أولًا."); return; }
@@ -999,27 +1116,8 @@ const App = (() => {
       const s = lb.selected();
       if (s < 0) { await UI.info("تنبيه", "اختاري موضوعًا مرجعيًا."); return false; }
       const p = visible[s];
-      const idx = dept.current_index;
-      dept.items[idx].reference_override = [p.source_file ?? "", p.title ?? ""];
-      dept.items[idx].new_topic_mode = false;
       ctl.close();
-      let data;
-      try {
-        data = dept.generate_item(idx);
-      } catch (e) {
-        await UI.error("تعذر التوليد", errText(e));
-        return false;
-      }
-      dept.items[idx].generated = data;
-      dLoadForm(idx);
-      dRefresh(idx);
-      try {
-        const t = dept.items[idx].topic;
-        Learning.remember_reference_choice(dept.learning_source_title(t), t.rationale, p, "department");
-        dStatus(`تم التوليد وحفظ اختيار الموضوع المرجعي للتعلّم المحلي. (اختيارات متعلّمة: ${Learning.learning_count("department")})`);
-      } catch (e) {
-        dStatus("تم التوليد باستخدام الموضوع المرجعي المختار.");
-      }
+      await dApplyReference(p);
       return false;
     };
     const lb = UI.listbox({ height: 16, onActivate: () => choose() });
@@ -1169,6 +1267,8 @@ const App = (() => {
     bind("c-generate", cGenerateIncluded);
     bind("c-show-source", cShowSource);
     bind("c-choose-ref", cChoosePrecedent);
+    bind("c-search-archive", () => searchArchive("college"));
+    bind("c-search-archive-top", () => searchArchive("college"));
     bind("c-show-ref", cShowReference);
     bind("c-export", cExport);
 
@@ -1183,6 +1283,8 @@ const App = (() => {
     bind("d-generate", dGenerateIncluded);
     bind("d-show-source", dShowSource);
     bind("d-choose-ref", dChooseReference);
+    bind("d-search-archive", () => searchArchive("department"));
+    bind("d-search-archive-top", () => searchArchive("department"));
     bind("d-show-ref", dShowReference);
     bind("d-export", dExport);
 

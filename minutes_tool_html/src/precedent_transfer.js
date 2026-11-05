@@ -584,6 +584,102 @@ const Precedent = (() => {
     return _bullet_join(_dedupe_lines(lines, 0.82));
   }
 
+
+  // ---------------------------------------------------------------- college wording for titles (تعديلات 11/2026)
+  // الرتبة في التوصية تتبع الرتبة المستخرجة في عنوان الموضوع.
+  const _AR_LETTER = "\\u0621-\\u064A\\u0671-\\u06D3";
+  const _RANK_RX = new RegExp(
+    `(?<![${_AR_LETTER}])(?:[أا]ستاذ(?:ة|ه)?(?:\\s+(?:مساعد(?:ة|ه)?|مشارك(?:ة|ه)?))?|محاضر(?:ة|ه)?|معيد(?:ة|ه)?)(?![${_AR_LETTER}])`, "gu");
+  function sync_rank_with_title(title, decision) {
+    if (!title || !decision) return decision;
+    const found = String(title).match(_RANK_RX);
+    if (!found) return decision;
+    // نأخذ أطول رتبة في العنوان (مثلا «أستاذ مساعد» وليس «أستاذ»)
+    const rank = found.sort((a, b) => b.length - a.length)[0];
+    return String(decision).replace(_RANK_RX, (m) => (_norm(m) === _norm(rank) ? m : rank));
+  }
+
+  // كلمات صياغة مجلس الكلية: تتكرر في عناوين عدة محاضر، بخلاف الأسماء والبيانات المتغيرة.
+  let _TITLE_DF = null, _TITLE_DF_SRC = null, _TITLE_DF_LEN = -1;
+  const _PREFIXES = ["وبال", "فال", "كال", "بال", "وال", "لل", "ال", "و", "ب", "ل"];
+  function _stem(tok) {
+    for (const pre of _PREFIXES) if (tok.startsWith(pre) && tok.length - pre.length >= 2) return tok.slice(pre.length);
+    return tok;
+  }
+  function _title_tokens(text) {
+    return (_norm(text).match(/[ء-ي0-9A-Za-z٠-٩]+/g) || []).filter((t) => t.length >= 2);
+  }
+  function set_title_corpus(archive_topics) {
+    if (_TITLE_DF_SRC === archive_topics && _TITLE_DF_LEN === (archive_topics || []).length) return;
+    _TITLE_DF = new Map();
+    for (const p of archive_topics || []) {
+      for (const st of new Set(_title_tokens(p.title || "").map(_stem))) _TITLE_DF.set(st, (_TITLE_DF.get(st) || 0) + 1);
+    }
+    _TITLE_DF_SRC = archive_topics;
+    _TITLE_DF_LEN = (archive_topics || []).length;
+  }
+
+  // عنوان بصياغة الموضوع المرجعي من مجلس الكلية، والبيانات المتغيرة من محضر القسم.
+  // يرجع "" إذا بقي في العنوان أي بيان قديم لا يوجد في محضر القسم الحالي.
+  function _college_title_from_reference(current_topic, precedent, department_name, score) {
+    const ref_title = strip(precedent.title || "");
+    const cur_title = _clean_current_title(current_topic.title ?? "");
+    if (!ref_title || !cur_title || !_TITLE_DF || score < 0.45) return "";
+    // الترقية فيها رتبتان (من/إلى) ولها مسارها الخاص
+    if (topic_family(current_topic.title ?? "", current_topic.rationale ?? "") === "promotion" || /ترقي/.test(cur_title)) return "";
+    let title = ref_title;
+
+    const old = extract_applicant(ref_title, precedent.rationale || "", precedent.council_name || department_name);
+    const nw = _current_staff_applicant(current_topic, department_name, old);
+    if (old.short && nw.short) {
+      title = _replace_applicant_in_template(title, old, nw);
+      title = _gender_neutralize_if_needed(title, old, nw);
+    }
+    const [, prev_sections] = _parse_labeled_sections(precedent.rationale ?? "");
+    const [, cur_sections] = _parse_labeled_sections(current_topic.rationale ?? "");
+    const cur_map = new Map(cur_sections.map(([l, v]) => [_label_key(l), v]));
+    const subs = [];
+    for (const [label, value] of prev_sections) {
+      const cv = cur_map.get(_label_key(label));
+      if (strip(value || "") && strip(cv || "") && PY.len(strip(value)) <= 120) subs.push([strip(value), strip(cv)]);
+    }
+    title = _apply_value_substitutions(title, subs);
+    if (department_name) {
+      for (const dep of ["علوم الحاسب", "تقنية المعلومات", old.department || ""]) {
+        if (dep && _norm(dep) !== _norm(department_name)) title = title.split(dep).join(department_name);
+      }
+    }
+    title = strip(re.sub("\\s+", " ", title));
+
+    const current_blob = `${current_topic.title ?? ""} ${current_topic.rationale ?? ""} ${current_topic.decision ?? ""} ${department_name || ""}`;
+    const cur_stems = Array.from(new Set(_title_tokens(current_blob).map(_stem)));
+    const cur_set = new Set(cur_stems);
+    const matches_current = (st) => cur_set.has(st) || (st.length >= 3 && cur_stems.some((c) => c.length >= 3 && (c.startsWith(st) || st.startsWith(c))));
+    // الأسماء بعد الشرطة المائلة (الطالب/ ...، الدكتورة/ ...) يجب أن تكون من محضر القسم الحالي
+    for (const m of title.matchAll(/\/\s*([^\/،,.()\n]+)/g)) {
+      for (const tok of _title_tokens(m[1]).slice(0, 4)) if (!cur_set.has(_stem(tok)) && !cur_set.has(tok)) return "";
+    }
+    for (const tok of _title_tokens(title)) {
+      const st = _stem(tok);
+      if (matches_current(st)) continue;
+      if (/\d/.test(tok)) return "";                    // رقم أو تاريخ قديم
+      if ((_TITLE_DF.get(st) || 0) < 3) return "";      // اسم أو بيان خاص بالسابقة
+    }
+    // يجب أن يبقى العنوان عن نفس نوع الطلب: كلمات عنوان القسم (غير الأسماء) موجودة في العنوان الجديد
+    const STOP = new Set(["من", "الي", "في", "علي", "عن", "دراسه", "مناقشه", "استعراض", "عرض", "طلب", "مقدم", "المقدم"]);
+    const name_toks = new Set();
+    for (const m of cur_title.matchAll(/\/\s*([^\/،,.()\n]+)/g)) for (const tok of _title_tokens(m[1]).slice(0, 4)) name_toks.add(_stem(tok));
+    const new_stems = Array.from(new Set(_title_tokens(title).map(_stem)));
+    const fuzzy_in_new = (st) => new_stems.some((c) => c === st || (c.length >= 3 && st.length >= 3 && (c.startsWith(st) || st.startsWith(c))));
+    const kind_words = Array.from(new Set(_title_tokens(cur_title).map(_stem)))
+      .filter((st) => st.length >= 3 && !STOP.has(st) && !STOP.has(_norm(st)) && !name_toks.has(st) && !/\d/.test(st));
+    if (kind_words.length) {
+      const kept = kind_words.filter(fuzzy_in_new).length;
+      if (kept / kind_words.length < 0.6) return "";
+    }
+    return title;
+  }
+
   function _generic_department_source_first_transfer(current_topic, department_name, session_number, session_date, precedent, score) {
     if (score < 0.18 || !department_name) return null;
     const current_title = _clean_current_title(current_topic.title ?? "");
@@ -604,10 +700,12 @@ const Precedent = (() => {
     let decision = current_decision;
     if (!decision) decision = `التوصية بالموافقة على ${current_title}.`;
 
-    let title = current_title;
-    if (["appointment", "promotion", "research_bonus"].includes(current_family)) {
-      title = _staff_title_from_college_reference(current_topic, precedent, department_name) || current_title;
+    let title = "";
+    if (["appointment", "promotion", "research_bonus", "conference"].includes(current_family)) {
+      title = _staff_title_from_college_reference(current_topic, precedent, department_name);
     }
+    if (!title) title = _college_title_from_reference(current_topic, precedent, department_name, score);
+    if (!title) title = current_title;
 
     return {
       title,
@@ -860,6 +958,11 @@ const Precedent = (() => {
     const cur_slots = _schedule_slots(current_title);
     const subs = ["program", "semester", "year"].filter((k) => prev_slots[k] && cur_slots[k]).map((k) => [prev_slots[k], cur_slots[k]]);
     out = _apply_value_substitutions(out, subs);
+    // الفصل الدراسي يأتي من محضر القسم الحالي حتى لو كتبته السابقة بدون العام الجامعي
+    const cur_sem = re.search("(?:ال|لل)فصل\\s+الدراسي\\s+(الأول|الاول|الثاني|الثالث|الصيفي)", `${current_title}`);
+    if (cur_sem) {
+      out = re.sub("((?:ال|لل)فصل\\s+الدراسي\\s+)(?:الأول|الاول|الثاني|الثالث|الصيفي)", (m) => m.group(1) + cur_sem.group(1), out);
+    }
     out = _force_current_department_context(out, department_name, session_number, session_date, precedent);
     return out;
   }
@@ -1277,6 +1380,6 @@ const Precedent = (() => {
     _schedule_college_opening, _replace_schedule_subject_in_text, _schedule_transfer, _research_bonus, _conference,
     _first_paragraph, _scholarship_result, _scholarship_request_title, _normalize_case_date, _field_lines,
     _committee_body, _scholarship_attachments, _scholarship_notice, build_from_precedent,
-    build_from_selected_reference,
+    build_from_selected_reference, sync_rank_with_title, set_title_corpus, _college_title_from_reference,
   };
 })();

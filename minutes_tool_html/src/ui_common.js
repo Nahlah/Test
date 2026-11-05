@@ -119,7 +119,7 @@ const UI = (() => {
 
   // ---------------------------------------------------------------- listbox
   // A simple accessible single-selection list (replaces Tk Listbox).
-  function listbox({ onActivate = null, height = 18 } = {}) {
+  function listbox({ onActivate = null, onSelect = null, height = 18 } = {}) {
     const el = h("div", { class: "listbox", role: "listbox", tabindex: "0", style: `max-height:${height * 2.1}em` });
     let items = [];
     let sel = -1;
@@ -127,7 +127,7 @@ const UI = (() => {
       el.innerHTML = "";
       items.forEach((it, i) => {
         const opt = h("div", { class: "opt" + (i === sel ? " sel" : ""), role: "option", "aria-selected": i === sel ? "true" : "false", text: it.label });
-        opt.addEventListener("click", () => { sel = i; render(); });
+        opt.addEventListener("click", () => { sel = i; render(); if (onSelect) onSelect(i); });
         opt.addEventListener("dblclick", () => { sel = i; render(); if (onActivate) onActivate(i); });
         el.appendChild(opt);
       });
@@ -135,8 +135,8 @@ const UI = (() => {
     };
     el.addEventListener("keydown", (e) => {
       if (!items.length) return;
-      if (e.key === "ArrowDown") { sel = Math.min(items.length - 1, sel + 1); render(); e.preventDefault(); }
-      else if (e.key === "ArrowUp") { sel = Math.max(0, sel - 1); render(); e.preventDefault(); }
+      if (e.key === "ArrowDown") { sel = Math.min(items.length - 1, sel + 1); render(); e.preventDefault(); if (onSelect) onSelect(sel); }
+      else if (e.key === "ArrowUp") { sel = Math.max(0, sel - 1); render(); e.preventDefault(); if (onSelect) onSelect(sel); }
       else if (e.key === "Enter" && sel >= 0 && onActivate) { onActivate(sel); e.preventDefault(); }
       const cur = el.querySelector(".sel");
       if (cur) cur.scrollIntoView({ block: "nearest" });

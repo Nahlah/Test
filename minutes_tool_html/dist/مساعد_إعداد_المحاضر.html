@@ -322,6 +322,7 @@ fieldset.record { border: 1px solid var(--line); border-radius: 8px; margin: 8px
       <button id="c-add-dept" class="primary">إضافة محضر قسم...</button>
       <button id="c-add-committee">إضافة محضر اللجنة الثلاثية للابتعاث...</button>
       <button id="c-add-manual">إضافة موضوع خاص بمجلس الكلية...</button>
+      <button id="c-search-archive-top">بحث في أرشيف مجلس الكلية...</button>
       <span class="spacer"></span>
       <button id="c-remove" class="danger">حذف الموضوع المعروض</button>
     </div>
@@ -362,6 +363,7 @@ fieldset.record { border: 1px solid var(--line); border-radius: 8px; margin: 8px
       <div class="ref-row">
         <span class="ref-note">يتم اختيار الموضوع المرجعي تلقائيًا من محاضر مجلس الكلية.</span>
         <button id="c-choose-ref">تغيير الموضوع المرجعي...</button>
+        <button id="c-search-archive">بحث في الأرشيف...</button>
         <button id="c-show-ref">عرض الموضوع المرجعي</button>
       </div>
       <div id="c-fields" class="fields"></div>
@@ -389,6 +391,7 @@ fieldset.record { border: 1px solid var(--line); border-radius: 8px; margin: 8px
       <button id="d-add-manual" class="primary">إضافة موضوع يدوي...</button>
       <button id="d-attach">إرفاق ملف بيانات للموضوع المعروض...</button>
       <button id="d-import">استيراد موضوعات من ملف...</button>
+      <button id="d-search-archive-top">بحث في أرشيف مجالس الأقسام...</button>
       <span class="spacer"></span>
       <button id="d-remove" class="danger">حذف الموضوع المعروض</button>
     </div>
@@ -429,6 +432,7 @@ fieldset.record { border: 1px solid var(--line); border-radius: 8px; margin: 8px
       <div class="ref-row">
         <span class="ref-note">يُختار الموضوع المرجعي من محاضر الأقسام وفق نطاق البحث المحدد.</span>
         <button id="d-choose-ref">تغيير الموضوع المرجعي...</button>
+        <button id="d-search-archive">بحث في الأرشيف...</button>
         <button id="d-show-ref">عرض الموضوع المرجعي</button>
       </div>
       <div id="d-fields" class="fields"></div>
@@ -3328,6 +3332,102 @@ const Precedent = (() => {
     return _bullet_join(_dedupe_lines(lines, 0.82));
   }
 
+
+  // ---------------------------------------------------------------- college wording for titles (تعديلات 11/2026)
+  // الرتبة في التوصية تتبع الرتبة المستخرجة في عنوان الموضوع.
+  const _AR_LETTER = "\\u0621-\\u064A\\u0671-\\u06D3";
+  const _RANK_RX = new RegExp(
+    `(?<![${_AR_LETTER}])(?:[أا]ستاذ(?:ة|ه)?(?:\\s+(?:مساعد(?:ة|ه)?|مشارك(?:ة|ه)?))?|محاضر(?:ة|ه)?|معيد(?:ة|ه)?)(?![${_AR_LETTER}])`, "gu");
+  function sync_rank_with_title(title, decision) {
+    if (!title || !decision) return decision;
+    const found = String(title).match(_RANK_RX);
+    if (!found) return decision;
+    // نأخذ أطول رتبة في العنوان (مثلا «أستاذ مساعد» وليس «أستاذ»)
+    const rank = found.sort((a, b) => b.length - a.length)[0];
+    return String(decision).replace(_RANK_RX, (m) => (_norm(m) === _norm(rank) ? m : rank));
+  }
+
+  // كلمات صياغة مجلس الكلية: تتكرر في عناوين عدة محاضر، بخلاف الأسماء والبيانات المتغيرة.
+  let _TITLE_DF = null, _TITLE_DF_SRC = null, _TITLE_DF_LEN = -1;
+  const _PREFIXES = ["وبال", "فال", "كال", "بال", "وال", "لل", "ال", "و", "ب", "ل"];
+  function _stem(tok) {
+    for (const pre of _PREFIXES) if (tok.startsWith(pre) && tok.length - pre.length >= 2) return tok.slice(pre.length);
+    return tok;
+  }
+  function _title_tokens(text) {
+    return (_norm(text).match(/[ء-ي0-9A-Za-z٠-٩]+/g) || []).filter((t) => t.length >= 2);
+  }
+  function set_title_corpus(archive_topics) {
+    if (_TITLE_DF_SRC === archive_topics && _TITLE_DF_LEN === (archive_topics || []).length) return;
+    _TITLE_DF = new Map();
+    for (const p of archive_topics || []) {
+      for (const st of new Set(_title_tokens(p.title || "").map(_stem))) _TITLE_DF.set(st, (_TITLE_DF.get(st) || 0) + 1);
+    }
+    _TITLE_DF_SRC = archive_topics;
+    _TITLE_DF_LEN = (archive_topics || []).length;
+  }
+
+  // عنوان بصياغة الموضوع المرجعي من مجلس الكلية، والبيانات المتغيرة من محضر القسم.
+  // يرجع "" إذا بقي في العنوان أي بيان قديم لا يوجد في محضر القسم الحالي.
+  function _college_title_from_reference(current_topic, precedent, department_name, score) {
+    const ref_title = strip(precedent.title || "");
+    const cur_title = _clean_current_title(current_topic.title ?? "");
+    if (!ref_title || !cur_title || !_TITLE_DF || score < 0.45) return "";
+    // الترقية فيها رتبتان (من/إلى) ولها مسارها الخاص
+    if (topic_family(current_topic.title ?? "", current_topic.rationale ?? "") === "promotion" || /ترقي/.test(cur_title)) return "";
+    let title = ref_title;
+
+    const old = extract_applicant(ref_title, precedent.rationale || "", precedent.council_name || department_name);
+    const nw = _current_staff_applicant(current_topic, department_name, old);
+    if (old.short && nw.short) {
+      title = _replace_applicant_in_template(title, old, nw);
+      title = _gender_neutralize_if_needed(title, old, nw);
+    }
+    const [, prev_sections] = _parse_labeled_sections(precedent.rationale ?? "");
+    const [, cur_sections] = _parse_labeled_sections(current_topic.rationale ?? "");
+    const cur_map = new Map(cur_sections.map(([l, v]) => [_label_key(l), v]));
+    const subs = [];
+    for (const [label, value] of prev_sections) {
+      const cv = cur_map.get(_label_key(label));
+      if (strip(value || "") && strip(cv || "") && PY.len(strip(value)) <= 120) subs.push([strip(value), strip(cv)]);
+    }
+    title = _apply_value_substitutions(title, subs);
+    if (department_name) {
+      for (const dep of ["علوم الحاسب", "تقنية المعلومات", old.department || ""]) {
+        if (dep && _norm(dep) !== _norm(department_name)) title = title.split(dep).join(department_name);
+      }
+    }
+    title = strip(re.sub("\\s+", " ", title));
+
+    const current_blob = `${current_topic.title ?? ""} ${current_topic.rationale ?? ""} ${current_topic.decision ?? ""} ${department_name || ""}`;
+    const cur_stems = Array.from(new Set(_title_tokens(current_blob).map(_stem)));
+    const cur_set = new Set(cur_stems);
+    const matches_current = (st) => cur_set.has(st) || (st.length >= 3 && cur_stems.some((c) => c.length >= 3 && (c.startsWith(st) || st.startsWith(c))));
+    // الأسماء بعد الشرطة المائلة (الطالب/ ...، الدكتورة/ ...) يجب أن تكون من محضر القسم الحالي
+    for (const m of title.matchAll(/\/\s*([^\/،,.()\n]+)/g)) {
+      for (const tok of _title_tokens(m[1]).slice(0, 4)) if (!cur_set.has(_stem(tok)) && !cur_set.has(tok)) return "";
+    }
+    for (const tok of _title_tokens(title)) {
+      const st = _stem(tok);
+      if (matches_current(st)) continue;
+      if (/\d/.test(tok)) return "";                    // رقم أو تاريخ قديم
+      if ((_TITLE_DF.get(st) || 0) < 3) return "";      // اسم أو بيان خاص بالسابقة
+    }
+    // يجب أن يبقى العنوان عن نفس نوع الطلب: كلمات عنوان القسم (غير الأسماء) موجودة في العنوان الجديد
+    const STOP = new Set(["من", "الي", "في", "علي", "عن", "دراسه", "مناقشه", "استعراض", "عرض", "طلب", "مقدم", "المقدم"]);
+    const name_toks = new Set();
+    for (const m of cur_title.matchAll(/\/\s*([^\/،,.()\n]+)/g)) for (const tok of _title_tokens(m[1]).slice(0, 4)) name_toks.add(_stem(tok));
+    const new_stems = Array.from(new Set(_title_tokens(title).map(_stem)));
+    const fuzzy_in_new = (st) => new_stems.some((c) => c === st || (c.length >= 3 && st.length >= 3 && (c.startsWith(st) || st.startsWith(c))));
+    const kind_words = Array.from(new Set(_title_tokens(cur_title).map(_stem)))
+      .filter((st) => st.length >= 3 && !STOP.has(st) && !STOP.has(_norm(st)) && !name_toks.has(st) && !/\d/.test(st));
+    if (kind_words.length) {
+      const kept = kind_words.filter(fuzzy_in_new).length;
+      if (kept / kind_words.length < 0.6) return "";
+    }
+    return title;
+  }
+
   function _generic_department_source_first_transfer(current_topic, department_name, session_number, session_date, precedent, score) {
     if (score < 0.18 || !department_name) return null;
     const current_title = _clean_current_title(current_topic.title ?? "");
@@ -3348,10 +3448,12 @@ const Precedent = (() => {
     let decision = current_decision;
     if (!decision) decision = `التوصية بالموافقة على ${current_title}.`;
 
-    let title = current_title;
-    if (["appointment", "promotion", "research_bonus"].includes(current_family)) {
-      title = _staff_title_from_college_reference(current_topic, precedent, department_name) || current_title;
+    let title = "";
+    if (["appointment", "promotion", "research_bonus", "conference"].includes(current_family)) {
+      title = _staff_title_from_college_reference(current_topic, precedent, department_name);
     }
+    if (!title) title = _college_title_from_reference(current_topic, precedent, department_name, score);
+    if (!title) title = current_title;
 
     return {
       title,
@@ -3604,6 +3706,11 @@ const Precedent = (() => {
     const cur_slots = _schedule_slots(current_title);
     const subs = ["program", "semester", "year"].filter((k) => prev_slots[k] && cur_slots[k]).map((k) => [prev_slots[k], cur_slots[k]]);
     out = _apply_value_substitutions(out, subs);
+    // الفصل الدراسي يأتي من محضر القسم الحالي حتى لو كتبته السابقة بدون العام الجامعي
+    const cur_sem = re.search("(?:ال|لل)فصل\\s+الدراسي\\s+(الأول|الاول|الثاني|الثالث|الصيفي)", `${current_title}`);
+    if (cur_sem) {
+      out = re.sub("((?:ال|لل)فصل\\s+الدراسي\\s+)(?:الأول|الاول|الثاني|الثالث|الصيفي)", (m) => m.group(1) + cur_sem.group(1), out);
+    }
     out = _force_current_department_context(out, department_name, session_number, session_date, precedent);
     return out;
   }
@@ -4021,7 +4128,7 @@ const Precedent = (() => {
     _schedule_college_opening, _replace_schedule_subject_in_text, _schedule_transfer, _research_bonus, _conference,
     _first_paragraph, _scholarship_result, _scholarship_request_title, _normalize_case_date, _field_lines,
     _committee_body, _scholarship_attachments, _scholarship_notice, build_from_precedent,
-    build_from_selected_reference,
+    build_from_selected_reference, sync_rank_with_title, set_title_corpus, _college_title_from_reference,
   };
 })();
 
@@ -7445,6 +7552,60 @@ const AppLogic = (() => {
     return PY.len(t) <= n ? t : Array.from(t).slice(0, n - 1).join("") + "…";
   }
 
+  // ================================================================= shared helpers (تعديلات 11/2026)
+  const _DIGITS = { "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4", "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+    "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4", "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9" };
+  const _ascii_digits = (s) => String(s || "").replace(/[٠-٩۰-۹]/g, (d) => _DIGITS[d]);
+
+  // مفتاح ترتيب زمني تقريبي للمحضر: التاريخ (هجري أو ميلادي) ثم رقم الجلسة.
+  function topic_time_key(p) {
+    const text = _ascii_digits(p.session_date || "");
+    let y = 0, m = 0, d = 0;
+    const nums = (text.match(/\d+/g) || []).map(Number);
+    const yi = nums.findIndex((n) => n >= 1000);
+    if (yi >= 0) {
+      y = nums[yi];
+      const rest = nums.filter((_, i) => i !== yi);
+      if (yi === 0) { m = rest[0] || 0; d = rest[1] || 0; } else { d = rest[0] || 0; m = rest[1] || 0; }
+      if (y < 1700) y = y * 0.970224 + 621.5774; // هجري → ميلادي تقريبًا
+    }
+    const sess = Number((_ascii_digits(p.session_number || "").match(/\d+/) || [0])[0]);
+    return y * 10000 + m * 100 + d + sess / 1000;
+  }
+
+  // من المرشحين [[topic, score], ...] من نفس النوع: يقدّم الأحدث تاريخًا (لاتباع صيغة آخر المحاضر).
+  function prefer_newest(matches, same_kind, min_score = 0.30) {
+    if (!matches.length) return matches;
+    const pool = matches.filter(([p, s]) => s >= min_score && same_kind(p));
+    if (pool.length < 2) return matches;
+    let best = pool[0];
+    for (const cand of pool) if (topic_time_key(cand[0]) > topic_time_key(best[0])) best = cand;
+    if (best === matches[0]) return matches;
+    return [[best[0], Math.max(best[1], matches[0][1])]].concat(matches.filter((x) => x !== best));
+  }
+
+  // بحث حر في الأرشيف كله: تطابق نصي في العنوان ثم في النص، ثم الأقرب تشابهًا. بلا بحث: الأحدث أولًا.
+  function archive_search(pool, query, limit = 150) {
+    const q = normalize_ar(query || "");
+    const key = (p) => JSON.stringify([p.source_file, p.title]);
+    if (!q) return pool.slice().sort((a, b) => topic_time_key(b) - topic_time_key(a)).slice(0, limit);
+    const inTitle = [], inBody = [];
+    for (const p of pool) {
+      if (normalize_ar(p.title ?? "").includes(q)) inTitle.push(p);
+      else if (normalize_ar(`${p.rationale ?? ""} ${p.decision ?? ""} ${p.attachments ?? ""}`).includes(q)) inBody.push(p);
+    }
+    const byDate = (a, b) => topic_time_key(b) - topic_time_key(a);
+    inTitle.sort(byDate); inBody.sort(byDate);
+    const similar = pool.length ? new TopicMatcher(pool).find_similar(query, "", Math.min(limit, pool.length), 0.25).map(([p]) => p) : [];
+    const seen = new Set();
+    const out = [];
+    for (const p of inTitle.concat(inBody, similar)) {
+      const k = key(p);
+      if (!seen.has(k)) { seen.add(k); out.push(p); }
+    }
+    return out.slice(0, limit);
+  }
+
   // ================================================================= college council
   class College {
     constructor() {
@@ -7583,28 +7744,36 @@ const AppLogic = (() => {
       if (!this.archive_topics.length) return [];
       item._learned_reference_used = false;
       const [current_family, reference_pool] = P.reference_topics_for_current(this.archive_topics, topic.title, topic.rationale);
-      if (P.STRICT_REFERENCE_FAMILIES.has(current_family) && !reference_pool.length) return [];
       const override = item.precedent_override;
+      if (P.STRICT_REFERENCE_FAMILIES.has(current_family) && !reference_pool.length && !override) return [];
       if (override) {
         const [source_file, title] = override;
-        for (const p of reference_pool) if (p.source_file === source_file && p.title === title) return [[p, 1.0]];
+        for (const p of this.archive_topics) if (p.source_file === source_file && p.title === title) return [[p, 1.0]];
         if (P.STRICT_REFERENCE_FAMILIES.has(current_family)) return [];
       }
       const learned = Learning.find_learned_reference(topic.title, topic.rationale, reference_pool, 0.74, "college");
       if (learned) {
         const [learned_ref, learned_score] = learned;
         item._learned_reference_used = true;
-        const normal = new TopicMatcher(reference_pool).find_similar(topic.title, topic.rationale, 8, 0.0);
+        const single_family = P.SINGLE_REFERENCE_FAMILIES.has(current_family);
+        const normal = new TopicMatcher(reference_pool).find_similar(topic.title, topic.rationale, single_family ? Math.max(8, reference_pool.length) : 8, 0.0);
         const out = [[learned_ref, Math.max(0.95, learned_score)]];
         const seen = new Set([JSON.stringify([learned_ref.source_file, learned_ref.title])]);
         for (const [p, score] of normal) {
           const key = JSON.stringify([p.source_file, p.title]);
           if (!seen.has(key)) { out.push([p, score]); seen.add(key); }
         }
-        return P.SINGLE_REFERENCE_FAMILIES.has(current_family) ? out.slice(0, 1) : out.slice(0, 8);
+        if (P.SINGLE_REFERENCE_FAMILIES.has(current_family)) return this._newest_of_family(out, current_family).slice(0, 1);
+        return out.slice(0, 8);
       }
-      const matches = new TopicMatcher(reference_pool).find_similar(topic.title, topic.rationale, 8, 0.0);
-      return P.SINGLE_REFERENCE_FAMILIES.has(current_family) ? matches.slice(0, 1) : matches;
+      const single = P.SINGLE_REFERENCE_FAMILIES.has(current_family);
+      const matches = new TopicMatcher(reference_pool).find_similar(topic.title, topic.rationale, single ? Math.max(8, reference_pool.length) : 8, 0.0);
+      return single ? this._newest_of_family(matches, current_family).slice(0, 1) : matches;
+    }
+
+    // بدل التميز والتعيين والترقية: صيغة آخر محضر من نفس النوع (مثل عدد المستندات والمرفقات).
+    _newest_of_family(matches, family) {
+      return prefer_newest(matches, (p) => P.topic_family(p.title ?? "", p.rationale ?? "") === family, 0.0);
     }
 
     generate_item(idx) {
@@ -7629,6 +7798,7 @@ const AppLogic = (() => {
       }
       const session = item.session;
       const department_name = item.source_kind === "department" ? session.council_name : "";
+      P.set_title_corpus(this.archive_topics);
       let data;
       if (item.precedent_override) {
         data = P.build_from_selected_reference(topic, department_name, session.session_number, session.date, top_reference);
@@ -7643,6 +7813,9 @@ const AppLogic = (() => {
           "وجدت موضوعات قريبة في مجلس الكلية، لكن التطابق غير كافٍ لتطبيق أحدها تلقائيًا. " +
           "استخدمي «تغيير الموضوع المرجعي» لاختيار الأنسب يدويًا.\n\nأقرب الموضوعات:\n" + suggestion,
         );
+      }
+      if (P.topic_family(topic.title ?? "", topic.rationale ?? "") !== "promotion" && !/ترقي/.test(data.title || "")) {
+        data.decision = P.sync_rank_with_title(data.title, data.decision);
       }
       data._reference_title = top_reference.title ?? "";
       data._reference_session = top_reference.session_number ?? "";
@@ -7673,6 +7846,10 @@ const AppLogic = (() => {
       const refs = this.find_precedents(item, cloneTopic(item.topic));
       if (refs.length) return [refs[0][0], refs[0][1], "مقترح تلقائيًا"];
       return [null, null, ""];
+    }
+
+    archive_search(query) {
+      return archive_search(this.archive_topics, query);
     }
 
     chooser_pool(idx) {
@@ -7773,7 +7950,7 @@ const AppLogic = (() => {
       if (!pool.length) return [];
       const override = item.reference_override;
       if (override) {
-        for (const p of pool) if (p.source_file === override[0] && p.title === override[1]) return [[p, 1.0]];
+        for (const p of this.archive_topics) if (p.source_file === override[0] && p.title === override[1]) return [[p, 1.0]];
       }
       const topic = item.topic;
       const learned = Learning.find_learned_reference(this.learning_source_title(topic), topic.rationale, pool, 0.74, "department");
@@ -7788,9 +7965,17 @@ const AppLogic = (() => {
           const k = JSON.stringify([x.source_file, x.title]);
           if (!seen.has(k)) { out.push([x, s]); seen.add(k); }
         }
-        return out.slice(0, 8);
+        return this._newest_of_profile(out.slice(0, 8), topic);
       }
-      return new TopicMatcher(pool).find_similar(topic.title, topic.rationale, 8, 0.0);
+      return this._newest_of_profile(new TopicMatcher(pool).find_similar(topic.title, topic.rationale, 8, 0.0), topic);
+    }
+
+    // نماذج الطلبات (بدل التميز، المؤتمر، التعيين، الترقية): صيغة آخر محضر من نفس النوع.
+    _newest_of_profile(matches, topic) {
+      if (!matches.length) return matches;
+      const profile = FormFields._profile_from_title(topic.title || "") || FormFields._profile_from_title(matches[0][0].title || "");
+      if (!profile) return matches;
+      return prefer_newest(matches, (p) => FormFields._profile_from_title(p.title || "") === profile, 0.30);
     }
 
     generate_item(idx) {
@@ -7813,6 +7998,9 @@ const AppLogic = (() => {
         throw new Error("درجة التشابه منخفضة. استخدمي «تغيير الموضوع المرجعي» لتحديد المرجع المناسب أو اعتبريه موضوعًا جديدًا.");
       }
       const data = DeptTransfer.build_department_from_reference(topic, ref, score, strip(this.target_department));
+      if (data._source_profile !== "promotion" && !/ترقي/.test(data.title || "")) {
+        data.decision = P.sync_rank_with_title(data.title, data.decision);
+      }
       data._learned_reference_used = !!item._learned_reference_used;
       return data;
     }
@@ -7823,7 +8011,7 @@ const AppLogic = (() => {
       const pool = this.scope_topics();
       const override = item.reference_override;
       if (override) {
-        for (const p of pool) if (p.source_file === override[0] && p.title === override[1]) return [p, 1.0, "مختار يدويًا"];
+        for (const p of this.archive_topics) if (p.source_file === override[0] && p.title === override[1]) return [p, 1.0, "مختار يدويًا"];
       }
       const data = item.generated || {};
       if (data._reference_title) {
@@ -7845,6 +8033,10 @@ const AppLogic = (() => {
       return refs;
     }
 
+    archive_search(query) {
+      return archive_search(this.archive_topics, query);
+    }
+
     chooser_search(query) {
       const pool = this.scope_topics();
       const q = strip(query);
@@ -7855,7 +8047,7 @@ const AppLogic = (() => {
     }
   }
 
-  return { College, Department, DEPARTMENTS, SCOPE_LABELS, dept_key, shortTitle, pct, cloneTopic };
+  return { College, Department, DEPARTMENTS, SCOPE_LABELS, dept_key, shortTitle, pct, cloneTopic, topic_time_key, prefer_newest, archive_search };
 })();
 
 // ---- store.js
@@ -8061,7 +8253,7 @@ const UI = (() => {
 
   // ---------------------------------------------------------------- listbox
   // A simple accessible single-selection list (replaces Tk Listbox).
-  function listbox({ onActivate = null, height = 18 } = {}) {
+  function listbox({ onActivate = null, onSelect = null, height = 18 } = {}) {
     const el = h("div", { class: "listbox", role: "listbox", tabindex: "0", style: `max-height:${height * 2.1}em` });
     let items = [];
     let sel = -1;
@@ -8069,7 +8261,7 @@ const UI = (() => {
       el.innerHTML = "";
       items.forEach((it, i) => {
         const opt = h("div", { class: "opt" + (i === sel ? " sel" : ""), role: "option", "aria-selected": i === sel ? "true" : "false", text: it.label });
-        opt.addEventListener("click", () => { sel = i; render(); });
+        opt.addEventListener("click", () => { sel = i; render(); if (onSelect) onSelect(i); });
         opt.addEventListener("dblclick", () => { sel = i; render(); if (onActivate) onActivate(i); });
         el.appendChild(opt);
       });
@@ -8077,8 +8269,8 @@ const UI = (() => {
     };
     el.addEventListener("keydown", (e) => {
       if (!items.length) return;
-      if (e.key === "ArrowDown") { sel = Math.min(items.length - 1, sel + 1); render(); e.preventDefault(); }
-      else if (e.key === "ArrowUp") { sel = Math.max(0, sel - 1); render(); e.preventDefault(); }
+      if (e.key === "ArrowDown") { sel = Math.min(items.length - 1, sel + 1); render(); e.preventDefault(); if (onSelect) onSelect(sel); }
+      else if (e.key === "ArrowUp") { sel = Math.max(0, sel - 1); render(); e.preventDefault(); if (onSelect) onSelect(sel); }
       else if (e.key === "Enter" && sel >= 0 && onActivate) { onActivate(sel); e.preventDefault(); }
       const cur = el.querySelector(".sel");
       if (cur) cur.scrollIntoView({ block: "nearest" });
@@ -8676,6 +8868,126 @@ const App = (() => {
     UI.textPopup("الموضوع المرجعي من محاضر مجلس الكلية", header, raw);
   }
 
+  async function cApplyReference(p) {
+      const cur = college.current_index;
+      if (cur === null || !(cur >= 0 && cur < college.items.length)) {
+        await UI.error("تعذر التوليد", "لم يعد الموضوع الحالي متاحًا. أعيدي اختياره من القائمة.");
+        return;
+      }
+      const target = college.items[cur];
+      target.precedent_override = [p.source_file ?? "", p.title ?? ""];
+      target.new_topic_mode = false;
+      target._learned_reference_used = false;
+      $("#c-gen-info").textContent = `تم اختيار الموضوع المرجعي: ${p.source_file || ""} — جلسة ${p.session_number || ""} | جارٍ التوليد...`;
+      let data;
+      try {
+        data = college.generate_item(cur);
+      } catch (e) {
+        await UI.error("تعذر توليد الموضوع", errText(e));
+        cStatus(errText(e));
+        $("#c-gen-info").textContent = `تعذر التوليد بعد اختيار الموضوع المرجعي: ${errText(e)}`;
+        return;
+      }
+      target.generated = data;
+      cLoadItem(cur);
+      cRenderRows();
+      cStatus("تم توليد الموضوع باستخدام الموضوع المرجعي الذي تم اختياره يدويًا.");
+      try {
+        Learning.remember_reference_choice(target.topic.title, target.topic.rationale, p, "college");
+        cStatus(`تم توليد الموضوع وحفظ اختيار الموضوع المرجعي للتعرّف على الموضوعات المشابهة لاحقًا. (اختيارات متعلّمة: ${Learning.learning_count("college")})`);
+      } catch (e) { /* التوليد أهم من حفظ التعلم */ }
+  }
+
+
+  // ---------------------------------------------------------------- بحث حر في الأرشيف (مجلس الكلية / مجلس القسم)
+  function referenceText(ref) {
+    return `عنوان الموضوع:\n${ref.title || "-"}\n\nالحيثيات:\n${ref.rationale || "-"}\n\n` +
+      `التوصية / القرار:\n${ref.decision || "-"}\n\nالمستند:\n${ref.document_ref || "-"}\n\n` +
+      `المرفقات:\n${ref.attachments || "-"}\n\nالإجراء المطلوب:\n${ref.action_required || "-"}`;
+  }
+
+  async function searchArchive(kind) {
+    const isCollege = kind === "college";
+    const logic = isCollege ? college : dept;
+    if (!logic.archive_topics.length) {
+      await UI.warn("تنبيه", isCollege
+        ? "لا توجد محاضر مجلس كلية مرجعية محملة. اختاري مجلد المحاضر المرجعية من الإعدادات."
+        : "لا توجد محاضر أقسام مرجعية محملة. اختاري مجلد المحاضر المرجعية من الإعدادات.");
+      return;
+    }
+    const q = h("input", { type: "text", dir: "rtl", class: "wide", placeholder: "اكتبي أي كلمة: اسم، نوع الطلب، برنامج، جلسة..." });
+    const count = h("div", { class: "hint" });
+    const preview = h("textarea", { class: "readonly", readonly: true, dir: "rtl", rows: 12 });
+    preview.value = "اختاري موضوعًا من القائمة لعرض نصه كاملًا.";
+    let visible = [];
+    const current = () => {
+      const s = lb.selected();
+      return s >= 0 && s < visible.length ? visible[s] : null;
+    };
+    const lb = UI.listbox({
+      height: 11,
+      onSelect: () => {
+        const p = current();
+        if (!p) return;
+        preview.value = `المحضر: ${p.source_file || "-"} | ${p.council_name || ""} | الجلسة: ${p.session_number || "-"} | التاريخ: ${p.session_date || "-"}\n\n` + referenceText(p);
+        preview.scrollTop = 0;
+      },
+    });
+    const refresh = () => {
+      try {
+        visible = logic.archive_search(q.value);
+      } catch (e) {
+        visible = [];
+      }
+      lb.set(visible.map((p) => ({
+        label: (isCollege ? "" : `${p.council_name || ""} | `) + `جلسة ${p.session_number || ""} | ${p.session_date || ""} | ${L.shortTitle(p.title || "", 90)}`,
+      })));
+      count.textContent = strip(q.value)
+        ? `النتائج: ${visible.length} (من ${logic.archive_topics.length} موضوعًا في الأرشيف)`
+        : `كل موضوعات الأرشيف (${logic.archive_topics.length})، الأحدث أولًا — اكتبي للبحث.`;
+    };
+    let timer = null;
+    q.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(refresh, 200); });
+    const body = h("div", { class: "form" },
+      h("label", { text: isCollege ? "البحث في كل محاضر مجلس الكلية (بدون تحديد موضوع):" : "البحث في كل محاضر مجالس الأقسام (بدون تحديد موضوع):" }),
+      q, count, lb.el, h("label", { text: "نص الموضوع المختار:" }), preview);
+    const ctl = UI.modal({
+      title: isCollege ? "بحث في أرشيف مجلس الكلية" : "بحث في أرشيف مجالس الأقسام",
+      body, wide: true,
+      buttons: [
+        {
+          label: "نسخ النص", close: false,
+          onClick: async () => {
+            const p = current();
+            if (!p) { await UI.info("تنبيه", "اختاري موضوعًا من القائمة أولًا."); return false; }
+            const text = referenceText(p);
+            try { await navigator.clipboard.writeText(text); }
+            catch (e) { preview.focus(); preview.select(); document.execCommand("copy"); }
+            (isCollege ? cStatus : dStatus)("تم نسخ نص الموضوع من الأرشيف.");
+            return false;
+          },
+        },
+        {
+          label: "استخدامه مرجعًا للموضوع المعروض", primary: true, close: false,
+          onClick: async () => {
+            const p = current();
+            if (!p) { await UI.info("تنبيه", "اختاري موضوعًا من القائمة أولًا."); return false; }
+            const idx = logic.current_index;
+            if (idx === null || !(idx >= 0 && idx < logic.items.length)) {
+              await UI.info("تنبيه", "لا يوجد موضوع معروض لربطه. يمكنك نسخ النص فقط، أو إضافة موضوع ثم اختياره.");
+              return false;
+            }
+            ctl.close();
+            if (isCollege) await cApplyReference(p); else await dApplyReference(p);
+            return false;
+          },
+        },
+        { label: "إغلاق" },
+      ],
+    });
+    refresh();
+  }
+
   async function cChoosePrecedent() {
     const idx = college.current_index;
     if (idx === null || !(idx >= 0 && idx < college.items.length)) { await UI.info("تنبيه", "اختاري موضوعًا أولًا."); return; }
@@ -8701,34 +9013,8 @@ const App = (() => {
       const s = lb.selected();
       if (s < 0) { await UI.info("تنبيه", "اختاري موضوعًا مرجعيًا من القائمة."); return false; }
       const p = visible[s];
-      const cur = college.current_index;
-      if (cur === null || !(cur >= 0 && cur < college.items.length)) {
-        await UI.error("تعذر التوليد", "لم يعد الموضوع الحالي متاحًا. أعيدي اختياره من القائمة.");
-        return false;
-      }
-      const target = college.items[cur];
-      target.precedent_override = [p.source_file ?? "", p.title ?? ""];
-      target.new_topic_mode = false;
-      target._learned_reference_used = false;
-      $("#c-gen-info").textContent = `تم اختيار الموضوع المرجعي: ${p.source_file || ""} — جلسة ${p.session_number || ""} | جارٍ التوليد...`;
       ctl.close();
-      let data;
-      try {
-        data = college.generate_item(cur);
-      } catch (e) {
-        await UI.error("تعذر توليد الموضوع", errText(e));
-        cStatus(errText(e));
-        $("#c-gen-info").textContent = `تعذر التوليد بعد اختيار الموضوع المرجعي: ${errText(e)}`;
-        return false;
-      }
-      target.generated = data;
-      cLoadItem(cur);
-      cRenderRows();
-      cStatus("تم توليد الموضوع باستخدام الموضوع المرجعي الذي تم اختياره يدويًا.");
-      try {
-        Learning.remember_reference_choice(target.topic.title, target.topic.rationale, p, "college");
-        cStatus(`تم توليد الموضوع وحفظ اختيار الموضوع المرجعي للتعرّف على الموضوعات المشابهة لاحقًا. (اختيارات متعلّمة: ${Learning.learning_count("college")})`);
-      } catch (e) { /* التوليد أهم من حفظ التعلم */ }
+      await cApplyReference(p);
       return false;
     };
     const lb = UI.listbox({ onActivate: () => choose(), height: 16 });
@@ -9240,6 +9526,29 @@ const App = (() => {
     } else dStatus(`تم توليد جميع الموضوعات المحددة (${done.length}).`);
   }
 
+  async function dApplyReference(p) {
+      const idx = dept.current_index;
+      dept.items[idx].reference_override = [p.source_file ?? "", p.title ?? ""];
+      dept.items[idx].new_topic_mode = false;
+      let data;
+      try {
+        data = dept.generate_item(idx);
+      } catch (e) {
+        await UI.error("تعذر التوليد", errText(e));
+        return;
+      }
+      dept.items[idx].generated = data;
+      dLoadForm(idx);
+      dRefresh(idx);
+      try {
+        const t = dept.items[idx].topic;
+        Learning.remember_reference_choice(dept.learning_source_title(t), t.rationale, p, "department");
+        dStatus(`تم التوليد وحفظ اختيار الموضوع المرجعي للتعلّم المحلي. (اختيارات متعلّمة: ${Learning.learning_count("department")})`);
+      } catch (e) {
+        dStatus("تم التوليد باستخدام الموضوع المرجعي المختار.");
+      }
+  }
+
   async function dChooseReference() {
     const idx0 = dept.current_index;
     if (idx0 === null) { await UI.info("تنبيه", "اختاري موضوعًا أولًا."); return; }
@@ -9253,27 +9562,8 @@ const App = (() => {
       const s = lb.selected();
       if (s < 0) { await UI.info("تنبيه", "اختاري موضوعًا مرجعيًا."); return false; }
       const p = visible[s];
-      const idx = dept.current_index;
-      dept.items[idx].reference_override = [p.source_file ?? "", p.title ?? ""];
-      dept.items[idx].new_topic_mode = false;
       ctl.close();
-      let data;
-      try {
-        data = dept.generate_item(idx);
-      } catch (e) {
-        await UI.error("تعذر التوليد", errText(e));
-        return false;
-      }
-      dept.items[idx].generated = data;
-      dLoadForm(idx);
-      dRefresh(idx);
-      try {
-        const t = dept.items[idx].topic;
-        Learning.remember_reference_choice(dept.learning_source_title(t), t.rationale, p, "department");
-        dStatus(`تم التوليد وحفظ اختيار الموضوع المرجعي للتعلّم المحلي. (اختيارات متعلّمة: ${Learning.learning_count("department")})`);
-      } catch (e) {
-        dStatus("تم التوليد باستخدام الموضوع المرجعي المختار.");
-      }
+      await dApplyReference(p);
       return false;
     };
     const lb = UI.listbox({ height: 16, onActivate: () => choose() });
@@ -9423,6 +9713,8 @@ const App = (() => {
     bind("c-generate", cGenerateIncluded);
     bind("c-show-source", cShowSource);
     bind("c-choose-ref", cChoosePrecedent);
+    bind("c-search-archive", () => searchArchive("college"));
+    bind("c-search-archive-top", () => searchArchive("college"));
     bind("c-show-ref", cShowReference);
     bind("c-export", cExport);
 
@@ -9437,6 +9729,8 @@ const App = (() => {
     bind("d-generate", dGenerateIncluded);
     bind("d-show-source", dShowSource);
     bind("d-choose-ref", dChooseReference);
+    bind("d-search-archive", () => searchArchive("department"));
+    bind("d-search-archive-top", () => searchArchive("department"));
     bind("d-show-ref", dShowReference);
     bind("d-export", dExport);
 
